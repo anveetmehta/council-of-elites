@@ -26,9 +26,14 @@ export async function middleware(request: NextRequest) {
     }
   );
 
+  // Use getSession() — reads JWT from cookie with no network call.
+  // getUser() (network-verified) stays in API routes where it matters.
+  // Calling getUser() in middleware causes MIDDLEWARE_INVOCATION_TIMEOUT on Vercel.
   const {
-    data: { user },
-  } = await supabase.auth.getUser();
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  const user = session?.user ?? null;
 
   const { pathname } = request.nextUrl;
 
