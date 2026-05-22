@@ -298,6 +298,7 @@ function CouncilMessageBlock({
                   response={{ response: turn.response, role: turn.role }}
                   isStreaming={false}
                   speakerSource={turn.speakerSource}
+                  hasMemory={!!message.personaMemoryCounts?.[turn.personaId]}
                 />
               </div>
             );
@@ -332,6 +333,7 @@ function CouncilMessageBlock({
                   isStreaming={!isThinkingState}
                   isThinking={isThinkingState}
                   speakerSource={userSelectedSpeakerId === streamingId ? 'user' : 'director'}
+                  hasMemory={!!message.personaMemoryCounts?.[streamingId]}
                 />
               </>
             );

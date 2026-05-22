@@ -276,6 +276,16 @@ export function useCouncil(initialMessages: CouncilMessage[] = []): UseCouncilRe
                 );
                 break;
               }
+              case "persona_memories": {
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === tempId
+                      ? { ...m, personaMemoryCounts: event.counts }
+                      : m
+                  )
+                );
+                break;
+              }
               case "done": {
                 if (flushTimer) {
                   clearTimeout(flushTimer);

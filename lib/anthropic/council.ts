@@ -2,6 +2,7 @@ import { getAnthropicClient } from "./client";
 import { CouncilMember, PersonaResponse, CouncilRole, ConversationTurn, DirectorDecision } from "@/types/council.types";
 import { getPersonaById } from "@/data/personas";
 import { getDomainExpertById } from "@/data/domain-experts";
+import { type MemoryEntry, formatMemoriesForPrompt } from "@/lib/memory";
 
 const SHARED_PREAMBLE = `You are one voice in a small council having a real conversation with someone who brought you a genuine problem.
 
@@ -44,7 +45,11 @@ export type PriorRound = {
   summary?: string;
 };
 
-export function buildSystemPrompt(member: CouncilMember, roster?: CouncilMember[]): string {
+export function buildSystemPrompt(
+  member: CouncilMember,
+  roster?: CouncilMember[],
+  memories?: MemoryEntry[]
+): string {
   const persona = getPersonaById(member.personaId) || getDomainExpertById(member.personaId);
   if (!persona) throw new Error(`Persona not found: ${member.personaId}`);
 
@@ -80,6 +85,14 @@ export function buildSystemPrompt(member: CouncilMember, roster?: CouncilMember[
     };
     if (member.attributes.tone in toneMap) {
       prompt += `\n\nTone instruction: ${toneMap[member.attributes.tone as keyof typeof toneMap]}`;
+    }
+  }
+
+  // Memory injection — what this persona knows about the user from past sessions
+  if (memories && memories.length > 0) {
+    const memoryBlock = formatMemoriesForPrompt(memories);
+    if (memoryBlock) {
+      prompt += `\n\n${memoryBlock}\n\nLet this context inform how you engage — don't quote memories back at them, but let it shape the depth and specificity of your response.`;
     }
   }
 
@@ -332,10 +345,11 @@ export async function streamPersonaWithHistory(
   recentRounds: PriorRound[] = [],
   conversationSummary: string | undefined,
   onToken: (text: string) => void,
-  roster?: CouncilMember[]
+  roster?: CouncilMember[],
+  memories?: MemoryEntry[]
 ): Promise<PersonaResponse> {
   const client = getAnthropicClient();
-  const systemPrompt = buildSystemPrompt(member, roster);
+  const systemPrompt = buildSystemPrompt(member, roster, memories);
 
   let userContent = question;
   const hasContext = conversationSummary || recentRounds.length > 0;
@@ -405,7 +419,8 @@ export async function streamModerator(
   question: string,
   otherResponses: Record<string, PersonaResponse>,
   onToken: (text: string) => void,
-  turns?: ConversationTurn[]
+  turns?: ConversationTurn[],
+  memories?: MemoryEntry[]
 ): Promise<string> {
   const client = getAnthropicClient();
   const persona =
@@ -433,7 +448,8 @@ export async function streamModerator(
       .join("\n\n");
   }
 
-  const systemPrompt = `${persona.systemPrompt}\n\n${SHARED_PREAMBLE}${ROLE_INJECTIONS.moderator}`;
+  const memoryBlock = memories && memories.length > 0 ? formatMemoriesForPrompt(memories) : "";
+  const systemPrompt = `${persona.systemPrompt}\n\n${SHARED_PREAMBLE}${ROLE_INJECTIONS.moderator}${memoryBlock ? `\n\n${memoryBlock}\n\nLet this context inform how you engage — don't quote memories back at them, but let it shape the depth and specificity of your response.` : ""}`;
   const userContent = `Question: "${question}"\n\nThe panel discussion:\n\n${conversationText}\n\nName the specific tension between panelists. Who disagreed and on what? Who's dodging something? Take a side in 2-3 sentences.`;
 
   const stream = client.messages.stream({
@@ -617,10 +633,11 @@ export async function streamReactionTurn(
   roster: CouncilMember[],
   recentRounds: PriorRound[],
   conversationSummary: string | undefined,
-  onToken: (text: string) => void
+  onToken: (text: string) => void,
+  memories?: MemoryEntry[]
 ): Promise<PersonaResponse> {
   const client = getAnthropicClient();
-  const systemPrompt = buildSystemPrompt(member, roster);
+  const systemPrompt = buildSystemPrompt(member, roster, memories);
 
   // Build conversation transcript from turns
   const transcript = allTurns

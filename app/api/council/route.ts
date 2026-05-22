@@ -15,6 +15,14 @@ import {
   ConversationEntry,
   PriorRound,
 } from "@/lib/anthropic/council";
+import {
+  fetchPersonaMemories,
+  extractMemoryEntries,
+  synthesizeReflection,
+  saveMemoryEntries,
+  countObservations,
+  type MemoryEntry,
+} from "@/lib/memory";
 import { getPersonaById } from "@/data/personas";
 import { getDomainExpertById } from "@/data/domain-experts";
 import { CouncilMember, PersonaResponse, SSEEvent, ConversationTurn, DirectorDecision } from "@/types/council.types";
@@ -136,6 +144,19 @@ export async function POST(req: NextRequest) {
 
   const isSinglePersona = nonModerators.length <= 1;
 
+  // ── Pre-fetch memories for all personas before stream starts ──────────────
+  const memoriesMap: Record<string, MemoryEntry[]> = {};
+  const memoryCounts: Record<string, number> = {};
+  await Promise.all(
+    [...nonModerators, ...moderators].map(async (member) => {
+      const memories = await fetchPersonaMemories(supabase, user.id, member.personaId);
+      if (memories.length > 0) {
+        memoriesMap[member.personaId] = memories;
+        memoryCounts[member.personaId] = memories.length;
+      }
+    })
+  );
+
   const stream = new ReadableStream({
     async start(controller) {
       const send = (event: SSEEvent) => {
@@ -150,6 +171,11 @@ export async function POST(req: NextRequest) {
       let autoSummary: string | null = null;
 
       try {
+        // Send memory counts to client so UI can show "memory active" indicators
+        if (Object.keys(memoryCounts).length > 0) {
+          send({ type: "persona_memories", counts: memoryCounts });
+        }
+
         // ═══ PHASE 0: Introductions ═══
         send({ type: "phase_change", phase: "introduction" });
 
@@ -220,7 +246,8 @@ export async function POST(req: NextRequest) {
             recentRounds,
             conversationSummary,
             (text) => send({ type: "token", personaId: member.personaId, text }),
-            members // roster for system prompt
+            members, // roster for system prompt
+            memoriesMap[member.personaId] // memory injection
           );
 
           allResponses[member.personaId] = result;
@@ -335,7 +362,8 @@ export async function POST(req: NextRequest) {
                     type: "token",
                     personaId: reactionMember.personaId,
                     text,
-                  })
+                  }),
+                memoriesMap[reactionMember.personaId] // memory injection
               );
 
               // Update allResponses with latest (overwrites initial take)
@@ -399,7 +427,8 @@ export async function POST(req: NextRequest) {
             question,
             allResponses,
             (text) => send({ type: "moderator_token", text }),
-            turns
+            turns,
+            memoriesMap[moderators[0].personaId] // memory injection
           );
 
           allResponses[moderators[0].personaId] = {
@@ -455,8 +484,9 @@ export async function POST(req: NextRequest) {
         send({ type: "done", councilMessageId: msg?.id ?? null });
         controller.close();
 
-        // Fire-and-forget: update running summary + title
+        // Fire-and-forget: update running summary + title + extract memories
         (async () => {
+          // ── Conversation summary + title ──────────────────────────────────
           try {
             const newSummary = await generateConversationSummary(
               room.conversation_summary ?? null,
@@ -480,6 +510,55 @@ export async function POST(req: NextRequest) {
               .eq("id", councilRoomId);
           } catch (e) {
             console.error("Background summary update failed:", e);
+          }
+
+          // ── Memory extraction: one pass per persona that spoke ─────────────
+          for (const member of nonModerators) {
+            try {
+              const personaTurns = turns.filter((t) => t.personaId === member.personaId);
+              if (personaTurns.length === 0) continue;
+
+              const personaResponse = personaTurns.map((t) => t.response).join(" ");
+              const entries = await extractMemoryEntries(
+                member.personaId,
+                question,
+                personaResponse,
+                turns
+              );
+
+              if (entries.length > 0) {
+                await saveMemoryEntries(
+                  supabase,
+                  user.id,
+                  member.personaId,
+                  entries,
+                  "observation",
+                  { councilRoomId, sourceMessageId: msg?.id }
+                );
+
+                // Trigger reflection synthesis every 8 new observations
+                const obsCount = await countObservations(supabase, user.id, member.personaId);
+                if (obsCount > 0 && obsCount % 8 === 0) {
+                  const allMemories = await fetchPersonaMemories(supabase, user.id, member.personaId, 24);
+                  const obsOnly = allMemories.filter((m) => m.memoryType === "observation");
+                  if (obsOnly.length >= 4) {
+                    const reflections = await synthesizeReflection(member.personaId, obsOnly);
+                    if (reflections.length > 0) {
+                      await saveMemoryEntries(
+                        supabase,
+                        user.id,
+                        member.personaId,
+                        reflections,
+                        "reflection",
+                        { councilRoomId }
+                      );
+                    }
+                  }
+                }
+              }
+            } catch (e) {
+              console.error(`Memory extraction failed for ${member.personaId}:`, e);
+            }
           }
         })();
       } catch (err: unknown) {

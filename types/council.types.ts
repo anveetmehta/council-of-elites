@@ -71,6 +71,8 @@ export interface CouncilMessage {
   currentPhase?: "introduction" | "initial" | "reaction" | "wrap-up";
   // End-of-session clarity artifact
   sessionArtifact?: SessionArtifact;
+  // Memory counts per persona (how many memories they have of this user)
+  personaMemoryCounts?: Record<string, number>;
 }
 
 // SSE event types emitted by /api/council during streaming
@@ -85,6 +87,7 @@ export type SSEEvent =
   | { type: "summary_done"; summary: string }
   | { type: "chips"; questions: string[] }
   | { type: "session_artifact"; artifact: SessionArtifact }
+  | { type: "persona_memories"; counts: Record<string, number> }
   | { type: "done"; councilMessageId: string | null }
   | { type: "error"; message: string }
   | { type: "turn_done"; turnIndex: number; personaId: string; fullResponse: string; role: CouncilRole; phase: string; userRequestedSpeaker?: boolean; speakerSource?: 'user' | 'director' | 'system' }

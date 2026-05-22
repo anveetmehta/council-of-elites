@@ -11,6 +11,7 @@ interface PersonaResponseCardProps {
   isStreaming?: boolean;
   isThinking?: boolean; // Show "X is thinking..." state
   speakerSource?: 'user' | 'director' | 'system'; // Why they're speaking
+  hasMemory?: boolean; // Whether this persona has memories of the user
 }
 
 export function PersonaResponseCard({
@@ -19,7 +20,8 @@ export function PersonaResponseCard({
   skeleton = false,
   isStreaming = false,
   isThinking = false,
-  speakerSource
+  speakerSource,
+  hasMemory = false,
 }: PersonaResponseCardProps) {
   const { label, className: roleClass } = getRoleBadgeConfig(response.role);
   const leftBorder = getRoleLeftBorderClass(response.role);
@@ -99,6 +101,12 @@ export function PersonaResponseCard({
                 {persona.name}
               </span>
               <TierBadge type={persona.personaType} />
+              {hasMemory && (
+                <span
+                  title="Remembers you"
+                  className="inline-flex h-1.5 w-1.5 rounded-full bg-violet-500/70"
+                />
+              )}
             </div>
             <div className="flex items-center gap-1.5">
               <p className="text-[10px] text-text-muted">{persona.tagline}</p>
