@@ -48,6 +48,12 @@ export interface DirectorDecision {
   shouldContinue: boolean;
 }
 
+export interface SessionArtifact {
+  cameInWith: string;
+  walkingOutWith: string;
+  keyDecision: string;
+}
+
 export interface CouncilMessage {
   id: string;
   council_room_id: string;
@@ -63,6 +69,8 @@ export interface CouncilMessage {
   streamingModeratorId?: string;
   suggestedChips?: string[];
   currentPhase?: "introduction" | "initial" | "reaction" | "wrap-up";
+  // End-of-session clarity artifact
+  sessionArtifact?: SessionArtifact;
 }
 
 // SSE event types emitted by /api/council during streaming
@@ -76,6 +84,7 @@ export type SSEEvent =
   | { type: "moderator_done"; output: string }
   | { type: "summary_done"; summary: string }
   | { type: "chips"; questions: string[] }
+  | { type: "session_artifact"; artifact: SessionArtifact }
   | { type: "done"; councilMessageId: string | null }
   | { type: "error"; message: string }
   | { type: "turn_done"; turnIndex: number; personaId: string; fullResponse: string; role: CouncilRole; phase: string; userRequestedSpeaker?: boolean; speakerSource?: 'user' | 'director' | 'system' }

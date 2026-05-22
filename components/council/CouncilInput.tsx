@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Send } from "lucide-react";
+import { Send, Square } from "lucide-react";
 import { CouncilMember } from "@/types/council.types";
 import { getPersonaById } from "@/data/personas";
 import { getDomainExpertById } from "@/data/domain-experts";
@@ -9,6 +9,7 @@ import { getPersonaHandle } from "@/lib/utils";
 
 interface CouncilInputProps {
   onSubmit: (question: string) => void;
+  onStop?: () => void;
   disabled?: boolean;
   placeholder?: string;
   members?: CouncilMember[];
@@ -18,6 +19,7 @@ interface CouncilInputProps {
 
 export function CouncilInput({
   onSubmit,
+  onStop,
   disabled,
   placeholder,
   members,
@@ -152,13 +154,23 @@ export function CouncilInput({
               rows={1}
               className="flex-1 resize-none bg-transparent text-sm text-text-primary placeholder:text-text-muted focus:outline-none leading-relaxed min-h-[24px] max-h-40 disabled:opacity-50"
             />
-            <button
-              onClick={handleSubmit}
-              disabled={!value.trim() || disabled}
-              className="p-1.5 rounded-lg bg-accent hover:bg-accent-hover disabled:opacity-30 disabled:cursor-not-allowed transition-colors shrink-0"
-            >
-              <Send size={14} className="text-white" />
-            </button>
+            {disabled && onStop ? (
+              <button
+                onClick={onStop}
+                title="Stop generating"
+                className="p-1.5 rounded-lg border border-surface-border hover:border-red-500/40 hover:bg-red-500/10 transition-colors shrink-0 group"
+              >
+                <Square size={14} className="text-text-muted group-hover:text-red-400 transition-colors" fill="currentColor" />
+              </button>
+            ) : (
+              <button
+                onClick={handleSubmit}
+                disabled={!value.trim() || disabled}
+                className="p-1.5 rounded-lg bg-accent hover:bg-accent-hover disabled:opacity-30 disabled:cursor-not-allowed transition-colors shrink-0"
+              >
+                <Send size={14} className="text-white" />
+              </button>
+            )}
           </div>
         </div>
         <p className="mt-1.5 text-[10px] text-text-muted text-center">

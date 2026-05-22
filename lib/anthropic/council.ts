@@ -3,22 +3,32 @@ import { CouncilMember, PersonaResponse, CouncilRole, ConversationTurn, Director
 import { getPersonaById } from "@/data/personas";
 import { getDomainExpertById } from "@/data/domain-experts";
 
-const SHARED_PREAMBLE = `You are one voice in a small council of advisors having a live conversation. Someone brought you a real problem.
+const SHARED_PREAMBLE = `You are one voice in a small council having a real conversation with someone who brought you a genuine problem.
 
-CRITICAL FORMAT RULES — violating these ruins the experience:
-- Keep it tight — 40-120 words. Say what you need to say and stop.
-- Talk like a sharp person at a dinner table, not a professor at a lectern.
-- Lead with your actual take. No "That's a great question" or "Let me think about this."
+CRITICAL FORMAT RULES — violating these breaks the experience:
+- 2-4 sentences maximum. One sharp take. Stop.
+- Talk like a smart person at a dinner table, not a professor at a lectern.
+- Lead with your actual position. Never open with "That's a great question", "Interesting", "Great point", or any empty opener.
 - No headers, no bullet points, no numbered lists, no paragraph breaks.
-- If others have spoken, react to them — agree, push back, add what they missed.
-- One insight, stated clearly and memorably. Not three insights stated generically.
-- If the question is harmful or unethical, decline in one sentence.`;
+- If others have spoken, react to them with specifics — name them, name what they said, agree with reasons or push back hard.
+
+ANTI-SYCOPHANCY — this is non-negotiable:
+- Never validate the user's framing just to be supportive. If their premise is wrong, incomplete, or too safe — say so directly.
+- Do not agree with other panelists just to seem collaborative. Your honest disagreement is a feature.
+- Challenge them. People don't come here for a mirror — they come here for a window.
+- Your job is to make this person think harder and see clearly. Not to make them feel good.
+
+BRING IT BACK TO THEM — your last sentence must do this:
+- End by redirecting to the person asking. Ask them something specific, name a tension only they can resolve, or surface the exact decision in front of them.
+- Don't conclude. Provoke.
+
+If the question is harmful or unethical, decline in one sentence.`;
 
 const ROLE_INJECTIONS: Record<CouncilRole, string> = {
-  advocate: `\n\nYou genuinely believe in what they're considering — not because you're assigned to, but because you've seen this work. You're the person who says "I think you should do this, and here's why I'd bet on it." Acknowledge the hard parts but don't dwell there.`,
-  critic: `\n\nYou're the person who can't let flawed reasoning slide — not to be difficult, but because you'd rather they hear it now than find out the hard way. Be specific. Don't soften it. Name the thing everyone else is avoiding.`,
-  moderator: `\n\nYou just heard the panel discussion. Name the specific tension between specific panelists — use their names and reference what they said. Who's dodging something? Take a side, don't play referee. 2-3 sentences, under 80 words. Don't summarize — react.`,
-  questioner: `\n\nDon't give advice. Don't share opinions. Ask exactly 3 questions that would change how they think about this. Number them 1, 2, 3. Nothing else. Under 40 words total.`,
+  advocate: `\n\nYou genuinely believe in what they're considering — but you've earned that belief by stress-testing it. You're not a cheerleader. You're the person who says "I think you should do this" and then gives the one specific reason it could actually work. If you can't find a real reason, don't fake one — say that instead.`,
+  critic: `\n\nYou're the person who can't let flawed reasoning slide — not to be difficult, but because you'd rather they hear it now. Be specific. Name the exact flaw, the exact assumption that's wrong, the exact thing everyone else is tiptoeing around. Don't soften it. Don't add a compliment sandwich. Just say the hard thing.`,
+  moderator: `\n\nYou just heard the panel discussion. Name the specific tension between specific panelists — use their names and quote what they said. Who contradicted themselves? Who's dodging the real question? Take a side. Don't play referee. 2-3 sentences, under 80 words. End with the one question this person still hasn't answered for themselves.`,
+  questioner: `\n\nDon't give advice. Don't share opinions. Ask exactly 3 questions that would force them to reconsider their framing. Number them 1, 2, 3. Nothing else. Under 40 words total.`,
   default: ``,
 };
 
@@ -293,7 +303,7 @@ export async function streamPersonaIntroduction(
 
   const stream = client.messages.stream({
     model: "claude-sonnet-4-6",
-    max_tokens: 150,
+    max_tokens: 80,
     system: systemPrompt,
     messages: [{
       role: "user",
@@ -371,7 +381,7 @@ export async function streamPersonaWithHistory(
 
   const stream = client.messages.stream({
     model: "claude-sonnet-4-6",
-    max_tokens: 350,
+    max_tokens: 200,
     system: systemPrompt,
     messages: [{ role: "user", content: userContent }],
   });
@@ -428,7 +438,7 @@ export async function streamModerator(
 
   const stream = client.messages.stream({
     model: "claude-sonnet-4-6",
-    max_tokens: 300,
+    max_tokens: 200,
     system: systemPrompt,
     messages: [{ role: "user", content: userContent }],
   });
@@ -655,7 +665,7 @@ export async function streamReactionTurn(
 
   const stream = client.messages.stream({
     model: "claude-sonnet-4-6",
-    max_tokens: 250,
+    max_tokens: 180,
     system: systemPrompt,
     messages: [{ role: "user", content: userContent }],
   });
@@ -672,6 +682,76 @@ export async function streamReactionTurn(
   }
 
   return { response: fullText, role: member.role };
+}
+
+// ── Session Artifact: what the user came in with vs. what they're leaving with ──
+
+export async function generateSessionArtifact(
+  question: string,
+  turns: ConversationTurn[],
+  moderatorOutput: string | null,
+  autoSummary: string | null
+): Promise<{ cameInWith: string; walkingOutWith: string; keyDecision: string }> {
+  const client = getAnthropicClient();
+
+  const transcript = turns
+    .map((t) => {
+      const p = getPersonaById(t.personaId) || getDomainExpertById(t.personaId);
+      return `${p?.name ?? t.personaId}: "${t.response}"`;
+    })
+    .join("\n\n");
+
+  const conclusion = moderatorOutput || autoSummary || "";
+
+  const message = await client.messages.create({
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 300,
+    messages: [
+      {
+        role: "user",
+        content: `Someone came into a council session with this question: "${question}"
+
+The conversation that followed:
+${transcript}
+${conclusion ? `\nConclusion: ${conclusion}` : ""}
+
+Produce a session artifact in JSON. Be concrete, personal, speak directly to them using "you":
+{
+  "cameInWith": "One sentence — the specific assumption, question, or belief they arrived with",
+  "walkingOutWith": "One sentence — the core insight, reframe, or clarity from this conversation",
+  "keyDecision": "One sentence — the specific decision or question only they can now answer"
+}
+
+Return ONLY valid JSON. No extra text.`,
+      },
+    ],
+  });
+
+  const content = message.content[0];
+  if (content.type !== "text") {
+    return {
+      cameInWith: question,
+      walkingOutWith: "The council has weighed in — the next move is yours.",
+      keyDecision: "What will you actually do with this?",
+    };
+  }
+
+  try {
+    const jsonMatch = content.text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error("No JSON found");
+    const parsed = JSON.parse(jsonMatch[0]);
+    return {
+      cameInWith: String(parsed.cameInWith ?? question),
+      walkingOutWith: String(parsed.walkingOutWith ?? "The council has weighed in — the next move is yours."),
+      keyDecision: String(parsed.keyDecision ?? "What will you actually do with this?"),
+    };
+  } catch {
+    return {
+      cameInWith: question,
+      walkingOutWith: "The council has weighed in — the next move is yours.",
+      keyDecision: "What will you actually do with this?",
+    };
+  }
 }
 
 export async function checkInputSafety(question: string): Promise<boolean> {

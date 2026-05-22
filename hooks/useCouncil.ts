@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { CouncilMember, CouncilMessage, ConversationTurn, SSEEvent } from "@/types/council.types";
 import { trackEvent, Events } from "@/lib/analytics";
 
@@ -10,17 +10,26 @@ interface UseCouncilReturn {
   error: string | null;
   setMessages: React.Dispatch<React.SetStateAction<CouncilMessage[]>>;
   askCouncil: (question: string, councilRoomId: string, members: CouncilMember[], userSelectedSpeakerId?: string) => Promise<void>;
+  stopCouncil: () => void;
 }
 
 export function useCouncil(initialMessages: CouncilMessage[] = []): UseCouncilReturn {
   const [messages, setMessages] = useState<CouncilMessage[]>(initialMessages);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  const stopCouncil = useCallback(() => {
+    abortControllerRef.current?.abort();
+  }, []);
 
   const askCouncil = useCallback(
     async (question: string, councilRoomId: string, members: CouncilMember[], userSelectedSpeakerId?: string) => {
       setIsLoading(true);
       setError(null);
+      // Create a fresh abort controller for this request
+      const abortController = new AbortController();
+      abortControllerRef.current = abortController;
 
       // Optimistic: add placeholder message immediately
       const tempId = `temp-${Date.now()}`;
@@ -77,6 +86,7 @@ export function useCouncil(initialMessages: CouncilMessage[] = []): UseCouncilRe
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ councilRoomId, members, question, userSelectedSpeakerId }),
+          signal: abortController.signal,
         });
 
         if (!res.ok) {
@@ -256,6 +266,16 @@ export function useCouncil(initialMessages: CouncilMessage[] = []): UseCouncilRe
                 );
                 break;
               }
+              case "session_artifact": {
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === tempId
+                      ? { ...m, sessionArtifact: event.artifact }
+                      : m
+                  )
+                );
+                break;
+              }
               case "done": {
                 if (flushTimer) {
                   clearTimeout(flushTimer);
@@ -286,15 +306,24 @@ export function useCouncil(initialMessages: CouncilMessage[] = []): UseCouncilRe
         if (flushTimer) {
           clearTimeout(flushTimer);
         }
-        setError(err instanceof Error ? err.message : "Something went wrong");
-        // Remove optimistic message on error
-        setMessages((prev) => prev.filter((m) => m.id !== tempId));
+        // Check if this was a user-triggered abort
+        const isAbort =
+          err instanceof DOMException && err.name === "AbortError";
+        if (isAbort) {
+          // Keep whatever partial response was rendered — don't wipe the message
+          // Just silently stop
+        } else {
+          setError(err instanceof Error ? err.message : "Something went wrong");
+          // Remove optimistic message on real errors
+          setMessages((prev) => prev.filter((m) => m.id !== tempId));
+        }
       } finally {
         setIsLoading(false);
+        abortControllerRef.current = null;
       }
     },
     []
   );
 
-  return { messages, isLoading, error, setMessages, askCouncil };
+  return { messages, isLoading, error, setMessages, askCouncil, stopCouncil };
 }

@@ -10,6 +10,7 @@ import {
   generateFollowUpChips,
   generateCouncilTitle,
   generateConversationSummary,
+  generateSessionArtifact,
   checkInputSafety,
   ConversationEntry,
   PriorRound,
@@ -420,6 +421,16 @@ export async function POST(req: NextRequest) {
           const chips = await generateFollowUpChips(question, allResponses, turns);
           if (chips.length > 0) {
             send({ type: "chips", questions: chips });
+          }
+        }
+
+        // ═══ Session Artifact: what they came in with vs. what they're leaving with ═══
+        if (turns.length > 0) {
+          try {
+            const artifact = await generateSessionArtifact(question, turns, moderatorOutput, autoSummary);
+            send({ type: "session_artifact", artifact });
+          } catch (e) {
+            console.error("Session artifact generation failed:", e);
           }
         }
 

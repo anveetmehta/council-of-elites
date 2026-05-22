@@ -16,6 +16,7 @@ import { FeedbackForm } from "@/components/council/FeedbackForm";
 import { DisclaimerModal } from "@/components/legal/DisclaimerModal";
 import { DisclaimerBanner } from "@/components/legal/DisclaimerBanner";
 import { PersonaAvatar } from "@/components/personas/PersonaAvatar";
+import { SessionArtifact } from "@/components/council/SessionArtifact";
 import { extractMentionHandle, getPersonaHandle } from "@/lib/utils";
 import { Loader2 } from "lucide-react";
 
@@ -32,7 +33,7 @@ export default function CouncilChatPage() {
   const [userSelectedSpeakerId, setUserSelectedSpeakerId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  const { messages, isLoading, error: councilError, setMessages, askCouncil } = useCouncil([]);
+  const { messages, isLoading, error: councilError, setMessages, askCouncil, stopCouncil } = useCouncil([]);
 
   // Load room and messages
   useEffect(() => {
@@ -182,6 +183,7 @@ export default function CouncilChatPage() {
       {/* Input */}
       <CouncilInput
         onSubmit={handleQuestion}
+        onStop={stopCouncil}
         disabled={isLoading}
         placeholder={`Ask your ${room.title || "council"}... or @Name to address one member`}
         members={members}
@@ -424,6 +426,13 @@ function CouncilMessageBlock({
           isStreaming={isActivelyLoading && !message.auto_summary}
         />
       )}
+
+      {/* Session artifact — what you came in with vs. walking out with */}
+      {isLatest &&
+        !isActivelyLoading &&
+        message.sessionArtifact && (
+          <SessionArtifact artifact={message.sessionArtifact} />
+        )}
 
       {/* Follow-up chips */}
       {showChips && (
