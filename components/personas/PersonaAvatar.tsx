@@ -25,7 +25,7 @@ export function PersonaAvatar({ persona, size = "md", className }: PersonaAvatar
   return (
     <div
       className={cn(
-        "rounded-lg flex items-center justify-center font-semibold shrink-0",
+        "rounded-lg flex items-center justify-center font-serif italic shrink-0",
         sizeMap[size],
         className
       )}

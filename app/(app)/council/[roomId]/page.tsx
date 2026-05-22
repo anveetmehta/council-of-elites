@@ -125,7 +125,7 @@ export default function CouncilChatPage() {
           ))}
         </div>
         <div className="flex-1 min-w-0">
-          <h1 className="text-sm font-semibold text-text-primary truncate">
+          <h1 className="text-sm font-serif italic text-text-primary truncate">
             {room.title || "New Council"}
           </h1>
           <p className="text-[11px] text-text-muted">

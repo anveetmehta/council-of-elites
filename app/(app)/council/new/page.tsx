@@ -199,7 +199,7 @@ export default function CouncilBuilderPage() {
   return (
     <div className="max-w-5xl mx-auto px-6 py-10">
       <div className="mb-8">
-        <h1 className="text-2xl font-semibold text-text-primary mb-2">
+        <h1 className="text-2xl font-serif italic text-text-primary mb-2">
           Build your council
         </h1>
         <p className="text-text-secondary text-sm">

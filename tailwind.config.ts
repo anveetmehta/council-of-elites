@@ -43,7 +43,7 @@ const config: Config = {
       },
       fontFamily: {
         sans: ["Inter", "system-ui", "sans-serif"],
-        serif: ["Lora", "Georgia", "serif"],
+        serif: ["var(--font-instrument-serif)", "Lora", "Georgia", "serif"],
       },
       animation: {
         "cursor-blink": "blink 1s step-end infinite",

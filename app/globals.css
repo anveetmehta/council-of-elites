@@ -1,13 +1,15 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Lora:ital,wght@0,400;0,600;1,400&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* ── CSS custom properties ──────────────────────────────────────────────────── */
 :root {
   --radius: 8px;
+  /* Instrument Serif injected by next/font; this is the fallback declaration */
+  --font-display: var(--font-instrument-serif, 'Georgia', serif);
 }
 
+/* ── Reset ───────────────────────────────────────────────────────────────────── */
 * {
   box-sizing: border-box;
   padding: 0;
@@ -29,7 +31,22 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Scrollbar */
+/* ── Atmospheric dark vignette ───────────────────────────────────────────────── */
+/* Pulls the page edges slightly darker, giving depth to the flat dark surface */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background: radial-gradient(
+    ellipse at 50% 0%,
+    transparent 40%,
+    rgba(0, 0, 0, 0.35) 100%
+  );
+}
+
+/* ── Scrollbar ───────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar {
   width: 4px;
   height: 4px;
@@ -45,19 +62,19 @@ body {
   background: #3A3A3A;
 }
 
-/* Selection */
+/* ── Selection ───────────────────────────────────────────────────────────────── */
 ::selection {
   background: rgba(167, 139, 250, 0.3);
   color: #F5F5F5;
 }
 
-/* Focus rings */
+/* ── Focus rings ─────────────────────────────────────────────────────────────── */
 *:focus-visible {
   outline: 2px solid #A78BFA;
   outline-offset: 2px;
 }
 
-/* Prose-like formatting for AI responses */
+/* ── AI response formatting ──────────────────────────────────────────────────── */
 .response-content p {
   margin-bottom: 0.75rem;
   line-height: 1.7;
@@ -76,7 +93,13 @@ body {
   color: #D4D4D4;
 }
 
-/* Animated loading cursor */
+/* ── Cursor halo pulse animation ─────────────────────────────────────────────── */
+@keyframes halo-pulse {
+  0%, 100% { opacity: 0.12; }
+  50%       { opacity: 0.22; }
+}
+
+/* ── Streaming cursor blink ──────────────────────────────────────────────────── */
 .cursor-blink::after {
   content: '▋';
   display: inline-block;
@@ -89,3 +112,8 @@ body {
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }
 }
+
+/* ── Inter font ──────────────────────────────────────────────────────────────── */
+/* Loaded via next/font in layout.tsx — this @import is kept as a fallback      */
+/* for environments where the font variable hasn't loaded yet.                   */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');

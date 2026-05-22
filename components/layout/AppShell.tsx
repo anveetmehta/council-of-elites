@@ -36,7 +36,7 @@ export function AppShell({ children, user }: AppShellProps) {
           >
             <Menu size={18} />
           </button>
-          <span className="text-sm font-semibold text-text-primary">Council of Elites</span>
+          <span className="text-sm font-serif italic text-text-primary">Council of Elites</span>
         </div>
 
         {/* Page content */}

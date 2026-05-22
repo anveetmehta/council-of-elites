@@ -64,7 +64,7 @@ export function Sidebar({ user, isOpen, onClose }: SidebarProps) {
           <div className="w-7 h-7 rounded-md bg-accent-muted border border-accent/30 flex items-center justify-center shrink-0">
             <Users size={14} className="text-accent" />
           </div>
-          <span className="text-sm font-semibold text-text-primary tracking-tight">
+          <span className="text-sm font-serif italic text-text-primary tracking-tight">
             Council of Elites
           </span>
         </div>
