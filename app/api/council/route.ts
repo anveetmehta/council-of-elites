@@ -23,6 +23,7 @@ import {
   countObservations,
   type MemoryEntry,
 } from "@/lib/memory";
+import { retrieveKnowledge } from "@/lib/knowledge";
 import { getPersonaById } from "@/data/personas";
 import { getDomainExpertById } from "@/data/domain-experts";
 import { CouncilMember, PersonaResponse, SSEEvent, ConversationTurn, DirectorDecision } from "@/types/council.types";
@@ -157,6 +158,15 @@ export async function POST(req: NextRequest) {
     })
   );
 
+  // ── Retrieve relevant knowledge for all personas (synchronous, in-memory) ──
+  const knowledgeMap: Record<string, string[]> = {};
+  for (const member of [...nonModerators, ...moderators]) {
+    const chunks = retrieveKnowledge(member.personaId, question);
+    if (chunks.length > 0) {
+      knowledgeMap[member.personaId] = chunks;
+    }
+  }
+
   const stream = new ReadableStream({
     async start(controller) {
       const send = (event: SSEEvent) => {
@@ -247,7 +257,8 @@ export async function POST(req: NextRequest) {
             conversationSummary,
             (text) => send({ type: "token", personaId: member.personaId, text }),
             members, // roster for system prompt
-            memoriesMap[member.personaId] // memory injection
+            memoriesMap[member.personaId], // memory injection
+            knowledgeMap[member.personaId] // knowledge injection
           );
 
           allResponses[member.personaId] = result;
@@ -363,7 +374,8 @@ export async function POST(req: NextRequest) {
                     personaId: reactionMember.personaId,
                     text,
                   }),
-                memoriesMap[reactionMember.personaId] // memory injection
+                memoriesMap[reactionMember.personaId], // memory injection
+                knowledgeMap[reactionMember.personaId] // knowledge injection
               );
 
               // Update allResponses with latest (overwrites initial take)
@@ -428,7 +440,8 @@ export async function POST(req: NextRequest) {
             allResponses,
             (text) => send({ type: "moderator_token", text }),
             turns,
-            memoriesMap[moderators[0].personaId] // memory injection
+            memoriesMap[moderators[0].personaId], // memory injection
+            knowledgeMap[moderators[0].personaId] // knowledge injection
           );
 
           allResponses[moderators[0].personaId] = {

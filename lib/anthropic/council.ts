@@ -3,6 +3,7 @@ import { CouncilMember, PersonaResponse, CouncilRole, ConversationTurn, Director
 import { getPersonaById } from "@/data/personas";
 import { getDomainExpertById } from "@/data/domain-experts";
 import { type MemoryEntry, formatMemoriesForPrompt } from "@/lib/memory";
+import { formatKnowledgeForPrompt } from "@/lib/knowledge";
 
 const SHARED_PREAMBLE = `You are one voice in a small council having a real conversation with someone who brought you a genuine problem.
 
@@ -48,7 +49,8 @@ export type PriorRound = {
 export function buildSystemPrompt(
   member: CouncilMember,
   roster?: CouncilMember[],
-  memories?: MemoryEntry[]
+  memories?: MemoryEntry[],
+  knowledge?: string[]
 ): string {
   const persona = getPersonaById(member.personaId) || getDomainExpertById(member.personaId);
   if (!persona) throw new Error(`Persona not found: ${member.personaId}`);
@@ -86,6 +88,12 @@ export function buildSystemPrompt(
     if (member.attributes.tone in toneMap) {
       prompt += `\n\nTone instruction: ${toneMap[member.attributes.tone as keyof typeof toneMap]}`;
     }
+  }
+
+  // Knowledge injection — grounded frameworks for this persona, retrieved per question
+  const knowledgeBlock = formatKnowledgeForPrompt(knowledge ?? []);
+  if (knowledgeBlock) {
+    prompt += `\n\n${knowledgeBlock}`;
   }
 
   // Memory injection — what this persona knows about the user from past sessions
@@ -346,10 +354,11 @@ export async function streamPersonaWithHistory(
   conversationSummary: string | undefined,
   onToken: (text: string) => void,
   roster?: CouncilMember[],
-  memories?: MemoryEntry[]
+  memories?: MemoryEntry[],
+  knowledge?: string[]
 ): Promise<PersonaResponse> {
   const client = getAnthropicClient();
-  const systemPrompt = buildSystemPrompt(member, roster, memories);
+  const systemPrompt = buildSystemPrompt(member, roster, memories, knowledge);
 
   let userContent = question;
   const hasContext = conversationSummary || recentRounds.length > 0;
@@ -420,7 +429,8 @@ export async function streamModerator(
   otherResponses: Record<string, PersonaResponse>,
   onToken: (text: string) => void,
   turns?: ConversationTurn[],
-  memories?: MemoryEntry[]
+  memories?: MemoryEntry[],
+  knowledge?: string[]
 ): Promise<string> {
   const client = getAnthropicClient();
   const persona =
@@ -449,7 +459,8 @@ export async function streamModerator(
   }
 
   const memoryBlock = memories && memories.length > 0 ? formatMemoriesForPrompt(memories) : "";
-  const systemPrompt = `${persona.systemPrompt}\n\n${SHARED_PREAMBLE}${ROLE_INJECTIONS.moderator}${memoryBlock ? `\n\n${memoryBlock}\n\nLet this context inform how you engage — don't quote memories back at them, but let it shape the depth and specificity of your response.` : ""}`;
+  const knowledgeBlock = formatKnowledgeForPrompt(knowledge ?? []);
+  const systemPrompt = `${persona.systemPrompt}\n\n${SHARED_PREAMBLE}${ROLE_INJECTIONS.moderator}${knowledgeBlock ? `\n\n${knowledgeBlock}` : ""}${memoryBlock ? `\n\n${memoryBlock}\n\nLet this context inform how you engage — don't quote memories back at them, but let it shape the depth and specificity of your response.` : ""}`;
   const userContent = `Question: "${question}"\n\nThe panel discussion:\n\n${conversationText}\n\nName the specific tension between panelists. Who disagreed and on what? Who's dodging something? Take a side in 2-3 sentences.`;
 
   const stream = client.messages.stream({
@@ -634,10 +645,11 @@ export async function streamReactionTurn(
   recentRounds: PriorRound[],
   conversationSummary: string | undefined,
   onToken: (text: string) => void,
-  memories?: MemoryEntry[]
+  memories?: MemoryEntry[],
+  knowledge?: string[]
 ): Promise<PersonaResponse> {
   const client = getAnthropicClient();
-  const systemPrompt = buildSystemPrompt(member, roster, memories);
+  const systemPrompt = buildSystemPrompt(member, roster, memories, knowledge);
 
   // Build conversation transcript from turns
   const transcript = allTurns
