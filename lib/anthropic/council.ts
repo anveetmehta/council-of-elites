@@ -7,20 +7,19 @@ import { formatKnowledgeForPrompt } from "@/lib/knowledge";
 
 const SHARED_PREAMBLE = `You are one voice in a small council. Someone brought you a real problem — they want a genuine reaction, not a performance.
 
-How to speak:
-- 2–4 sentences. One sharp, specific take. Know when to stop.
-- Sound like a smart person at dinner, not a TED talk. No openers like "Great question" or "Interesting point" — just say the thing.
-- No headers, bullet points, numbered lists, or paragraph breaks. Pure prose.
-- If others have spoken: react to them specifically. Name them, name what they said, and either build on it with a reason or push back hard. Don't just pivot to your own take.
+HOW TO SPEAK — THESE ARE HARD RULES:
+- 3 sentences. That is the limit. Stop after sentence 3, even mid-thought.
+- No asterisks, no bold, no italics, no markdown, no special formatting. Plain text only.
+- Sound like a sharp person talking, not writing. No openers, no sign-offs.
+- If others have ALREADY spoken (their words appear below): react to a specific claim — name them, name what they said, agree or disagree with a real reason. Do not summarize. Do not pivot away. React.
+- If you are speaking FIRST and no one else has spoken yet: give your raw take on the question. Don't reference other panelists — they haven't spoken.
 
-Don't be sycophantic:
-- If their premise is wrong or incomplete, say so. Validation without honesty is useless.
-- Disagree with other panelists when you actually disagree. Artificial consensus is worse than silence.
+Stay honest:
+- If their premise is wrong, say so directly. Validation without honesty is useless.
+- Hold your position. You have a committed take. Don't abandon it for harmony — only change your mind if someone gives you a genuinely compelling reason, and name it explicitly if you do.
 - Your job is clarity, not comfort.
-- You have a committed position based on your character. Do not abandon it for conversational harmony. If a panelist genuinely changes your mind, name the update explicitly — but only then.
 
-End by landing it:
-- Your last sentence goes back to the person asking. Name the specific tension they have to resolve, the decision only they can make, or the one thing they're avoiding. Don't conclude — provoke.
+The last sentence must land on the person asking — name the tension they have to resolve, the thing they're avoiding, or the question only they can answer. Don't conclude. Provoke.
 
 If the question is harmful or unethical, decline in one sentence.`;
 
@@ -167,30 +166,30 @@ export function buildSystemPrompt(
 
   prompt += ROLE_INJECTIONS[member.role];
 
-  // Inter-persona awareness — who's in the room, what they're likely to say
-  if (panelistDescriptions && panelistDescriptions.length > 0) {
-    const others = panelistDescriptions.filter((p) => p.personaId !== member.personaId);
-    if (others.length > 0) {
-      const intro = `\n\nYou are on this panel with:`;
-      const descriptions = others.map((p) => {
-        const roleHint = p.role !== "default" ? ` [${p.role}]` : "";
-        const stanceHint = p.stance ? ` Their instinctive take: "${p.stance}"` : "";
-        return `- ${p.name}${roleHint} — ${p.tagline}.${stanceHint}`;
-      });
-      prompt += `${intro}\n${descriptions.join("\n")}\n\nWhen reacting, address them by name. Where you genuinely disagree with their take, say so directly.`;
-    }
-  } else if (roster && roster.length > 1) {
-    // Fallback: simple awareness if no detailed descriptions
-    const otherPanelists = roster
-      .filter((m) => m.personaId !== member.personaId && m.role !== "moderator")
-      .map((m) => {
-        const p = getPersonaById(m.personaId) || getDomainExpertById(m.personaId);
-        const roleLabel = m.role !== "default" ? ` (${m.role})` : "";
-        return `${p?.name ?? m.personaId}${roleLabel}`;
-      });
-    if (otherPanelists.length > 0) {
-      prompt += `\n\nYou're on a panel with: ${otherPanelists.join(", ")}. Address them by name when reacting to what they said.`;
-    }
+  // Inter-persona awareness — who's in the room
+  // NOTE: We intentionally do NOT show other panelists' stances here.
+  // In Phase 1 they haven't spoken yet — stances would cause the model to
+  // fake "reactions" to words that were never said.
+  // In Phase 2 the actual spoken turns appear in the user message instead.
+  const otherPanelists = panelistDescriptions
+    ? panelistDescriptions
+        .filter((p) => p.personaId !== member.personaId)
+        .map((p) => {
+          const roleHint = p.role !== "default" ? ` [${p.role}]` : "";
+          return `- ${p.name}${roleHint} — ${p.tagline}`;
+        })
+    : roster
+    ? roster
+        .filter((m) => m.personaId !== member.personaId && m.role !== "moderator")
+        .map((m) => {
+          const p = getPersonaById(m.personaId) || getDomainExpertById(m.personaId);
+          const roleLabel = m.role !== "default" ? ` [${m.role}]` : "";
+          return `- ${p?.name ?? m.personaId}${roleLabel}`;
+        })
+    : [];
+
+  if (otherPanelists.length > 0) {
+    prompt += `\n\nOthers in this council:\n${otherPanelists.join("\n")}`;
   }
 
   // Committed stance — the position this persona will defend
@@ -446,26 +445,20 @@ export async function streamPersonaWithHistory(
     const historyText = history
       .map(({ name, role, response }) => {
         const roleLabel = role !== "default" ? ` [${role}]` : "";
-        return `${name}${roleLabel} said: "${response}"`;
+        return `${name}${roleLabel}: "${response}"`;
       })
       .join("\n\n");
 
     if (hasContext) {
-      userContent += `\n\n---\nWhat others have said so far in this round:\n\n${historyText}\n\nReact to them specifically. Name them by name. Either build with a reason or push back hard.`;
+      userContent += `\n\n---\nWhat's been said so far:\n\n${historyText}\n\nYour turn. React to something specific — don't just give your take in a vacuum.`;
     } else {
-      userContent = `${question}\n\n---\nWhat others have said so far in this round:\n\n${historyText}\n\nReact to them specifically. Name them by name. Either build with a reason or push back hard.`;
+      userContent = `${question}\n\n---\nWhat's been said so far:\n\n${historyText}\n\nYour turn. React to something specific — don't just give your take in a vacuum.`;
     }
-  }
-
-  // Adjacency pair forcing: every Phase 1 response should chain to a peer.
-  // Skip on the last speaker (they end with a redirect to the user instead).
-  if (panelistDescriptions && panelistDescriptions.length > 1 && !isLastInPhase1) {
-    userContent += `\n\nIMPORTANT: Your last sentence should directly address one of your fellow panelists by name — either with a sharp question or a specific challenge to a position you think they'd take. Set up the next person.`;
   }
 
   const stream = client.messages.stream({
     model: "claude-sonnet-4-6",
-    max_tokens: 220,
+    max_tokens: 160,
     system: systemPrompt,
     messages: [{ role: "user", content: userContent }],
   });
@@ -800,11 +793,11 @@ export async function streamReactionTurn(
     userContent = `Question: "${question}"`;
   }
 
-  userContent += `\n\nWhat's most relevant from the panel so far:\n\n${transcript}\n\n---\n${directorInstruction}\n\nOpen by naming the specific claim and person you're responding to. Then say your piece. Don't summarize — engage directly.`;
+  userContent += `\n\nWhat's been said:\n\n${transcript}\n\n---\nDirector's note: ${directorInstruction}\n\nReact. Name the specific claim and person you're pushing on. 3 sentences.`;
 
   const stream = client.messages.stream({
     model: "claude-sonnet-4-6",
-    max_tokens: 200,
+    max_tokens: 160,
     system: systemPrompt,
     messages: [{ role: "user", content: userContent }],
   });

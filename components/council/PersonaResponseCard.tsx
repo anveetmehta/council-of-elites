@@ -4,6 +4,25 @@ import { PersonaAvatar } from "@/components/personas/PersonaAvatar";
 import { TierBadge } from "@/components/personas/TierBadge";
 import { getRoleBadgeConfig, getRoleLeftBorderClass, cn } from "@/lib/utils";
 
+/** Renders plain text, converting *word* and **word** markdown emphasis to <em>/<strong> */
+function ResponseText({ text }: { text: string }) {
+  // Split on **bold** and *italic* patterns, render inline
+  const parts = text.split(/(\*\*[^*]+\*\*|\*[^*]+\*)/g);
+  return (
+    <>
+      {parts.map((part, i) => {
+        if (part.startsWith("**") && part.endsWith("**")) {
+          return <strong key={i} className="font-semibold text-text-primary">{part.slice(2, -2)}</strong>;
+        }
+        if (part.startsWith("*") && part.endsWith("*")) {
+          return <em key={i}>{part.slice(1, -1)}</em>;
+        }
+        return <span key={i}>{part}</span>;
+      })}
+    </>
+  );
+}
+
 interface PersonaResponseCardProps {
   persona: PersonaDefinition;
   response: PersonaResponse;
@@ -128,8 +147,8 @@ export function PersonaResponseCard({
       </div>
 
       {/* Response */}
-      <div className="response-content text-sm text-text-secondary leading-relaxed whitespace-pre-wrap">
-        {response.response}
+      <div className="response-content text-sm text-text-secondary leading-relaxed">
+        <ResponseText text={response.response} />
         {isStreaming && (
           <span className="inline-block w-0.5 h-3.5 bg-text-muted animate-pulse ml-0.5 align-middle" />
         )}
