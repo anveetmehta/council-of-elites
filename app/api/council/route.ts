@@ -2,7 +2,6 @@ import { NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import {
   streamPersonaWithHistory,
-  streamPersonaIntroduction,
   streamModerator,
   streamReactionTurn,
   callDirector,
@@ -186,44 +185,6 @@ export async function POST(req: NextRequest) {
           send({ type: "persona_memories", counts: memoryCounts });
         }
 
-        // ═══ PHASE 0: Introductions ═══
-        send({ type: "phase_change", phase: "introduction" });
-
-        for (const member of nonModerators) {
-          const persona =
-            getPersonaById(member.personaId) ||
-            getDomainExpertById(member.personaId);
-          if (!persona) continue;
-
-          // Send thinking indicator before intro
-          send({ type: "persona_thinking", personaId: member.personaId });
-
-          // Brief delay to simulate thinking
-          await new Promise((resolve) => setTimeout(resolve, 300));
-
-          send({
-            type: "persona_start",
-            personaId: member.personaId,
-            role: member.role,
-          });
-
-          const result = await streamPersonaIntroduction(
-            member,
-            (text) => send({ type: "token", personaId: member.personaId, text })
-          );
-
-          // Intro doesn't get persisted in conversation_turns or persona_responses
-          // It's just for initial engagement
-
-          send({
-            type: "persona_done",
-            personaId: member.personaId,
-            fullResponse: result.response,
-            role: member.role,
-            pauseAfterMs: 800, // Breathing room after each intro
-          });
-        }
-
         // ═══ PHASE 1: Initial Takes (shuffled order) ═══
         const shuffledNonModerators = isSinglePersona
           ? nonModerators
@@ -299,15 +260,22 @@ export async function POST(req: NextRequest) {
 
         // ═══ PHASE 2: Director-Driven Reactions (with Hand-Raise Override) ═══
         if (!isSinglePersona && nonModerators.length >= 2) {
-          const maxReactions = Math.min(nonModerators.length, 4);
+          const maxReactions = Math.min(nonModerators.length * 2, 4);
 
           send({ type: "phase_change", phase: "reaction" });
 
-          // Track if user has already made a hand-raise selection in this round
           let userSelectionUsed = false;
+          let reactionsCompleted = 0;
+          const reactionCountsLocal: Record<string, number> = {};
 
           for (let i = 0; i < maxReactions; i++) {
             try {
+              // Check who's still eligible (max 2 reactions per persona)
+              const eligibleMembers = nonModerators.filter(
+                (m) => (reactionCountsLocal[m.personaId] ?? 0) < 2
+              );
+              if (eligibleMembers.length === 0) break;
+
               let reactionMember: CouncilMember | undefined = undefined;
               let decision: DirectorDecision | undefined = undefined;
               let speakerSource: 'user' | 'director' | 'system' = 'director';
@@ -315,7 +283,7 @@ export async function POST(req: NextRequest) {
 
               // On first reaction, check if user selected a speaker
               if (i === 0 && userSelectedSpeakerId && !userSelectionUsed) {
-                reactionMember = nonModerators.find((m) => m.personaId === userSelectedSpeakerId);
+                reactionMember = eligibleMembers.find((m) => m.personaId === userSelectedSpeakerId);
                 if (reactionMember) {
                   userSelectionUsed = true;
                   speakerSource = 'user';
@@ -323,7 +291,7 @@ export async function POST(req: NextRequest) {
                 }
               }
 
-              // If no user selection or not first reaction, use director
+              // If no user selection, use director
               if (!reactionMember) {
                 decision = await callDirector(
                   question,
@@ -332,13 +300,35 @@ export async function POST(req: NextRequest) {
                   maxReactions - i
                 );
 
-                if (!decision || !decision.shouldContinue || !decision.nextSpeaker) break;
+                const directorStopping = !decision || !decision.shouldContinue || !decision.nextSpeaker;
 
-                reactionMember = nonModerators.find(
-                  (m) => m.personaId === decision!.nextSpeaker
-                );
-                instruction = decision!.instruction;
-                speakerSource = 'director';
+                if (directorStopping) {
+                  // Always force at least 1 reaction — the conversation needs it
+                  if (reactionsCompleted === 0) {
+                    // Pick the persona most likely to disagree: contrarian first, then random
+                    reactionMember =
+                      eligibleMembers.find((m) => m.personaId === "sharp-contrarian") ??
+                      eligibleMembers[Math.floor(Math.random() * eligibleMembers.length)];
+                    instruction = "React to the initial perspectives. Push back on a specific point or build on the most interesting idea raised.";
+                    speakerSource = 'director';
+                  } else {
+                    break;
+                  }
+                } else {
+                  reactionMember = nonModerators.find(
+                    (m) => m.personaId === decision!.nextSpeaker
+                  );
+                  if (!reactionMember) {
+                    if (reactionsCompleted === 0) {
+                      reactionMember = eligibleMembers[0];
+                      instruction = "React to the initial perspectives. Build on or challenge what was said.";
+                    } else {
+                      break;
+                    }
+                  }
+                  instruction = decision!.instruction;
+                  speakerSource = 'director';
+                }
               }
 
               if (!reactionMember) break;
@@ -407,9 +397,11 @@ export async function POST(req: NextRequest) {
                 personaId: reactionMember.personaId,
                 fullResponse: result.response,
                 role: reactionMember.role,
-                pauseAfterMs: 1000, // Breathing room between personas
+                pauseAfterMs: 1000,
               });
 
+              reactionCountsLocal[reactionMember.personaId] = (reactionCountsLocal[reactionMember.personaId] ?? 0) + 1;
+              reactionsCompleted++;
               turnIndex++;
             } catch (err) {
               console.error("Reaction turn failed:", err);

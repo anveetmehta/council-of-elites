@@ -150,13 +150,13 @@ export default function CouncilChatPage() {
           </div>
         )}
 
-        {/* Intro phase indicator */}
+        {/* Loading indicator for very first question */}
         {isLoading && messages.length === 0 && (
           <div className="text-center py-8">
-            <div className="flex items-center justify-center gap-2 mb-3">
+            <div className="flex items-center justify-center gap-2">
               <div className="w-1.5 h-1.5 rounded-full bg-accent-muted animate-pulse" />
-              <p className="text-sm text-text-secondary">Introductions forming...</p>
-              <div className="w-1.5 h-1.5 rounded-full bg-accent-muted animate-pulse" style={{ animationDelay: '0.2s' }} />
+              <div className="w-1.5 h-1.5 rounded-full bg-accent-muted animate-pulse" style={{ animationDelay: '0.15s' }} />
+              <div className="w-1.5 h-1.5 rounded-full bg-accent-muted animate-pulse" style={{ animationDelay: '0.3s' }} />
             </div>
           </div>
         )}
