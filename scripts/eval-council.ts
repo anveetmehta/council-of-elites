@@ -97,6 +97,30 @@ function detectAsterisks(text: string): boolean {
   return /\*[^*]+\*/.test(text);
 }
 
+function hasSpecificAnchor(text: string): boolean {
+  // Concrete numbers, percentages, currencies
+  if (/(\d[\d,]*\s*(?:lac|lakh|crore|cr|k|%|percent|million|m|b|years?|month|days?|rupees?|rs|₹|\$|€|£))/i.test(text)) return true;
+  // Math symbols
+  if (/(\d+\s*[*x×/+\-=]\s*\d+|\d+\s*to\s*\d+|\d{3,})/i.test(text)) return true;
+  // Named frameworks (common ones)
+  const frameworks = [
+    "inversion", "circle of competence", "lollapalooza", "specific knowledge",
+    "permissionless leverage", "first principles", "stoic", "regret minimization",
+    "base rate", "expected value", "second-order", "survivorship bias",
+    "steelman", "false binary", "moat", "TAM", "MVP", "bottleneck",
+    "theory of constraints", "sunk cost", "opportunity cost", "force function",
+    "asymmetric bet", "optionality", "build-measure-learn",
+  ];
+  const lower = text.toLowerCase();
+  if (frameworks.some((f) => lower.includes(f))) return true;
+  return false;
+}
+
+function hasScopingMove(text: string): boolean {
+  // Phrases that acknowledge missing info or ask clarifying questions
+  return /(assuming|don't know|haven't told|need to know|what's your|how old|how much|what is)/i.test(text);
+}
+
 function detectArtificialReferences(text: string, allNames: string[]): {
   hasNonExistentRef: boolean;
   hasAnticipatoryRef: boolean;
@@ -283,11 +307,11 @@ async function runScenario(scenario: Scenario): Promise<void> {
 
     const isHandoff = idx === turns.length - 1 && turn.phase === "reaction";
     const endsWithQuestion = /\?\s*$/.test(turn.response.trim());
+    const hasAnchor = hasSpecificAnchor(turn.response);
+    const hasScope = hasScopingMove(turn.response);
 
     const flags: string[] = [];
-    if (sentences > 4) flags.push(`LONG(${sentences} sentences)`);
-    if (sentences < 2) flags.push(`SHORT(${sentences} sentence)`);
-    if (words > 100) flags.push(`VERBOSE(${words} words)`);
+    if (words > 100) flags.push(`VERBOSE(${words}w)`);
     if (hasMd) flags.push("MARKDOWN");
     if (artRefs.hasAnticipatoryRef) flags.push("ANTICIPATORY_REF");
     if (turn.phase === "initial" && namedPeers.length > 0 && idx === 0) {
@@ -295,13 +319,16 @@ async function runScenario(scenario: Scenario): Promise<void> {
     }
     if (isHandoff && namedPeers.length > 0) flags.push("HANDOFF_ADDRESSES_PEERS");
     if (isHandoff && !endsWithQuestion) flags.push("HANDOFF_NO_QUESTION");
+    if (!hasAnchor) flags.push("NO_ANCHOR");  // No number / framework / specific example
 
     const peerNote = namedPeers.length > 0 ? ` [refs: ${namedPeers.join(", ")}]` : "";
-    const flagsNote = flags.length > 0 ? ` ⚠ ${flags.join(", ")}` : " ✓";
+    const scopeNote = hasScope ? " 🔍scope" : "";
+    const anchorNote = hasAnchor ? " ⚓anchor" : "";
+    const flagsNote = flags.length > 0 ? ` ⚠ ${flags.join(",")}` : " ✓";
     const handoffTag = isHandoff ? " 🎯HANDOFF" : "";
 
     console.log(
-      `  ${turn.phase[0].toUpperCase()}${turn.turnIndex} ${p?.name}${handoffTag}: ${sentences}s/${words}w${peerNote}${flagsNote}`
+      `  ${turn.phase[0].toUpperCase()}${turn.turnIndex} ${p?.name}${handoffTag}: ${sentences}s/${words}w${anchorNote}${scopeNote}${peerNote}${flagsNote}`
     );
   }
 }
