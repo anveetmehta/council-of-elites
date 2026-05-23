@@ -13,6 +13,8 @@ import {
   generateAllStances,
   classifyMove,
   checkInputSafety,
+  classifyNeedsScoping,
+  streamScopingTurn,
   ConversationEntry,
   PriorRound,
   type StanceMap,
@@ -205,6 +207,86 @@ export async function POST(req: NextRequest) {
         // Send memory counts to client so UI can show "memory active" indicators
         if (Object.keys(memoryCounts).length > 0) {
           send({ type: "persona_memories", counts: memoryCounts });
+        }
+
+        // ═══ PHASE 0: Scoping (only for vague first-round questions) ═══
+        // If the question is missing critical context, one persona names what's
+        // missing and states working assumptions before anyone gives advice.
+        // Skips on follow-ups (recentRounds.length > 0) and single-persona councils.
+        if (!isSinglePersona && recentRounds.length === 0 && nonModerators.length >= 2) {
+          try {
+            const needsScoping = await classifyNeedsScoping(question);
+            if (needsScoping) {
+              // Prefer contrarian, then strategic-leader, then critic role, then any
+              const scoper =
+                nonModerators.find((m) => m.personaId === "sharp-contrarian") ??
+                nonModerators.find((m) => m.personaId === "strategic-leader") ??
+                nonModerators.find((m) => m.role === "critic") ??
+                nonModerators[0];
+
+              const scoperPersona =
+                getPersonaById(scoper.personaId) ||
+                getDomainExpertById(scoper.personaId);
+
+              if (scoperPersona) {
+                send({ type: "persona_thinking", personaId: scoper.personaId });
+                await new Promise((resolve) => setTimeout(resolve, 400));
+
+                send({
+                  type: "persona_start",
+                  personaId: scoper.personaId,
+                  role: scoper.role,
+                });
+
+                const scopingResult = await streamScopingTurn(
+                  scoper,
+                  question,
+                  (text) => send({ type: "token", personaId: scoper.personaId, text }),
+                  panelistDescriptions,
+                  stances[scoper.personaId]
+                );
+
+                allResponses[scoper.personaId] = scopingResult;
+
+                const scopingTurn: ConversationTurn = {
+                  turnIndex,
+                  personaId: scoper.personaId,
+                  role: scoper.role,
+                  phase: "scoping",
+                  response: scopingResult.response,
+                  speakerSource: "system",
+                };
+                turns.push(scopingTurn);
+
+                send({
+                  type: "turn_done",
+                  turnIndex,
+                  personaId: scoper.personaId,
+                  fullResponse: scopingResult.response,
+                  role: scoper.role,
+                  phase: "scoping",
+                  speakerSource: "system",
+                });
+                send({
+                  type: "persona_done",
+                  personaId: scoper.personaId,
+                  fullResponse: scopingResult.response,
+                  role: scoper.role,
+                  pauseAfterMs: 800,
+                });
+
+                conversationHistory.push({
+                  name: scoperPersona.name,
+                  role: scoper.role,
+                  response: scopingResult.response,
+                });
+                turnIndex++;
+              }
+            }
+          } catch (err) {
+            console.error("Scoping phase failed:", err);
+            // Soft failure — continue to Phase 1 without scoping
+          }
         }
 
         // ═══ PHASE 1: Initial Takes (shuffled order) ═══

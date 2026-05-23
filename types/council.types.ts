@@ -34,7 +34,7 @@ export interface ConversationTurn {
   turnIndex: number;
   personaId: string;
   role: CouncilRole;
-  phase: "initial" | "reaction" | "introduction";
+  phase: "scoping" | "initial" | "reaction" | "introduction";
   response: string;
   // Track why this person is speaking
   userRequestedSpeaker?: boolean; // True if user hand-raised them

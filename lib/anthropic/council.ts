@@ -15,8 +15,8 @@ LENGTH — VARY IT, DON'T HIT A TARGET:
 
 REQUIRED — EVERY RESPONSE NEEDS AT LEAST ONE OF THESE:
 - A specific number or calculation (e.g. "₹96L at 30% savings over 10 years")
-- A named framework or mental model from your toolkit (e.g. "this is an inversion problem", "specific knowledge over commodity skills")
-- A concrete real-world parallel or named example
+- A named framework or mental model from your toolkit (e.g. "this is an inversion problem", "specific knowledge over commodity skills", "somatic check")
+- A concrete pattern from experience ("I've seen this with founders who...", "Most students at this stage...", "When a couple comes to me asking this...")
 - A pointed clarifying question about something material they haven't told you
 
 If you can't anchor your point with one of these, your point isn't ready.
@@ -47,12 +47,12 @@ If the question is harmful, decline in one sentence.`;
 // name and invoke when applicable, rather than paraphrasing them.
 // This is what makes a Munger reply sound like Munger and not like a generic analyst.
 const ARCHETYPE_FRAMEWORKS: Record<string, string> = {
-  leader: `Your toolkit (name these when they apply): bottleneck/highest-leverage move, sequencing, Theory of Constraints, sunk cost, runway, focus tax, opportunity cost. Use concrete operator language — "ship", "validate", "kill the project", "force function".`,
-  philosopher: `Your toolkit (name these when they apply): first principles, the examined life, Stoic dichotomy of control, premeditatio malorum, regret minimization, eulogy vs résumé virtues, the "as if" frame. Use precise philosophical distinctions, not vague gestures at meaning.`,
-  analyst: `Your toolkit (name these when they apply): expected value, base rates, second-order effects, falsifiability, regression to the mean, selection bias, marginal analysis. Show your math when you have a number.`,
-  coach: `Your toolkit (name these when they apply): the felt sense vs the thought, somatic check, "what's underneath this question", attachment styles, parts work, the cost of staying. Reflect specific words they used back to them.`,
-  contrarian: `Your toolkit (name these when they apply): inversion ("what would guarantee failure?"), survivorship bias, the steelman, false binary, hidden assumption, motivated reasoning, the unasked question. Be willing to be rude if politeness obscures the truth.`,
-  builder: `Your toolkit (name these when they apply): MVP, fast iteration, "doing things that don't scale", talking to users, build-measure-learn, the asymmetric bet, optionality. Reference concrete builder language and ship-cycles.`,
+  leader: `Your toolkit (name these when they apply): bottleneck/highest-leverage move, sequencing, Theory of Constraints, sunk cost, runway, focus tax, opportunity cost, force function, north star metric. Use concrete operator language — "ship", "validate", "kill the project". Anchor in patterns: "I've seen this in teams where..." or "Most operators at this stage..."`,
+  philosopher: `Your toolkit (name these when they apply): first principles, the examined life, Stoic dichotomy of control, premeditatio malorum, regret minimization, eulogy vs résumé virtues, the "as if" frame, Chesterton's fence. Use precise philosophical distinctions. Cite a thinker when relevant: "This is what Seneca meant when..." or "Aurelius would push back here."`,
+  analyst: `Your toolkit (name these when they apply): expected value, base rates, second-order effects, falsifiability, regression to the mean, selection bias, marginal analysis, conditional probability. Always show your math when you have a number. Run the actual calculation, don't gesture at it.`,
+  coach: `Your toolkit — USE THESE NAMES EXPLICITLY when they apply: felt sense, somatic check ("where do you feel that in your body?"), the cost of staying vs the cost of leaving, parts work ("there's a part of you that..."), the gap between what they're saying and what they're not saying, the body as data, the question underneath the question. Reflect their exact words back to them. Don't paraphrase — use what they said.`,
+  contrarian: `Your toolkit (name these when they apply): inversion ("invert — what would guarantee failure?"), survivorship bias, the steelman, false binary, hidden assumption, motivated reasoning, the unasked question, base rate neglect. Be rude when politeness obscures the truth. Real Munger says "that's blithering nonsense" — you can too.`,
+  builder: `Your toolkit (name these when they apply): MVP, fast iteration, doing things that don't scale, talking to users, build-measure-learn, the asymmetric bet, optionality, the unfair advantage. Reference concrete builder language: ship-cycles, prototypes, customer development. Pattern: "When I see X, the move is always Y."`,
 };
 
 const ROLE_INJECTIONS: Record<CouncilRole, string> = {
@@ -114,6 +114,99 @@ Plain text only. No asterisks, no bold, no markdown, no quotation marks for emph
   } catch {
     return "";
   }
+}
+
+// ── Scoping: detect vague questions, run a clarification turn ──
+//
+// Real advisors don't dispense advice on vague questions — they scope first.
+// "Should I quit my job?" needs to know: age, runway, what you'd do instead,
+// financial obligations. "Help me invest" needs: amount, timeline, risk tolerance.
+//
+// classifyNeedsScoping uses a cheap Haiku call to decide if the question
+// is missing enough material context that the panel should pause and ask.
+export async function classifyNeedsScoping(question: string): Promise<boolean> {
+  // Heuristic: very short questions almost always need scoping
+  const wordCount = question.trim().split(/\s+/).length;
+  if (wordCount <= 4) return true;
+  // Questions with concrete numbers and details are usually scoped already
+  const hasNumbers = /\d/.test(question);
+  if (wordCount > 25 && hasNumbers) return false;
+
+  const client = getAnthropicClient();
+  try {
+    const message = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 10,
+      messages: [
+        {
+          role: "user",
+          content: `Question: "${question}"
+
+Could a skilled advisor give a useful answer to this WITHOUT first asking clarifying questions? If they'd need to know critical details (age, finances, situation, timeline, alternatives) that weren't stated, answer NO. If the question is already specific enough to answer, answer YES.
+
+Answer in one word: YES or NO.`,
+        },
+      ],
+    });
+
+    const content = message.content[0];
+    if (content.type !== "text") return false;
+    return content.text.trim().toUpperCase().startsWith("N");
+  } catch {
+    return false;
+  }
+}
+
+// streamScopingTurn — one persona names what's missing, states their working
+// assumptions, and signals the panel can now proceed. This sets shared context
+// for all subsequent Phase 1 takes.
+export async function streamScopingTurn(
+  member: CouncilMember,
+  question: string,
+  onToken: (text: string) => void,
+  panelistDescriptions?: Array<{ personaId: string; name: string; tagline: string; role: CouncilRole; stance?: string }>,
+  committedStance?: string
+): Promise<PersonaResponse> {
+  const client = getAnthropicClient();
+  const systemPrompt = buildSystemPrompt(
+    member,
+    undefined,
+    undefined,
+    undefined,
+    committedStance,
+    panelistDescriptions
+  );
+
+  const userContent = `Someone just asked the panel: "${question}"
+
+But this question is too vague to answer well as-stated. Critical context is missing.
+
+YOUR JOB right now is to scope the conversation BEFORE anyone gives advice:
+1. In one sentence, list 2-3 specific pieces of info you'd need to actually answer this (ages, finances, timeline, what they've already tried, etc.).
+2. In one sentence, state the working assumptions you're going to use in the meantime so the conversation can move forward.
+3. Do NOT give advice yet. That's for the others.
+
+Under 60 words. Plain text. Direct.`;
+
+  const stream = client.messages.stream({
+    model: "claude-sonnet-4-6",
+    max_tokens: 140,
+    system: systemPrompt,
+    messages: [{ role: "user", content: userContent }],
+  });
+
+  let fullText = "";
+  for await (const event of stream) {
+    if (
+      event.type === "content_block_delta" &&
+      event.delta.type === "text_delta"
+    ) {
+      onToken(event.delta.text);
+      fullText += event.delta.text;
+    }
+  }
+
+  return { response: stripMarkdownEmphasis(fullText), role: member.role };
 }
 
 /** Strip asterisk-style markdown emphasis from text. Keeps emphasis as plain text. */
@@ -781,11 +874,12 @@ export async function streamReactionTurn(
     panelistDescriptions
   );
 
-  // Targeted context: only include the most relevant turns, not the full transcript
+  // Targeted context: enough turns for callbacks AND immediate engagement.
   // Strategy:
-  //   - This persona's own most recent turn (so they remember what they said)
-  //   - The last 2 turns (immediate conversational context)
-  //   - Any turn that mentions this persona by name (someone addressing them)
+  //   - Scoping turn(s) — establish what we're assuming about the situation
+  //   - ALL Phase 1 initial takes — these are the positions, used for callbacks
+  //   - Last 3 turns — immediate conversational context
+  //   - Any turn that mentions this persona by name (direct addressing)
   const myLastTurn = [...allTurns].reverse().find((t) => t.personaId === member.personaId);
   const personaName =
     getPersonaById(member.personaId)?.name ||
@@ -793,6 +887,8 @@ export async function streamReactionTurn(
     member.personaId;
   const myFirstName = personaName.replace(/^The\s/, "").split(" ")[0];
 
+  const scopingTurns = allTurns.filter((t) => t.phase === "scoping");
+  const initialTurns = allTurns.filter((t) => t.phase === "initial");
   const lastN = allTurns.slice(-3);
   const mentioningMe = allTurns.filter(
     (t) =>
@@ -801,6 +897,8 @@ export async function streamReactionTurn(
   );
 
   const relevantSet = new Set<number>();
+  for (const t of scopingTurns) relevantSet.add(t.turnIndex);
+  for (const t of initialTurns) relevantSet.add(t.turnIndex);
   if (myLastTurn) relevantSet.add(myLastTurn.turnIndex);
   for (const t of lastN) relevantSet.add(t.turnIndex);
   for (const t of mentioningMe) relevantSet.add(t.turnIndex);
@@ -849,7 +947,7 @@ export async function streamReactionTurn(
   }
 
   if (isHandoffTurn) {
-    userContent += `\n\nWhat's been said:\n\n${transcript}\n\n---\nHANDOFF MOMENT — read this carefully:\n${directorInstruction}\n\nDO NOT address other panelists. Speak to the person who asked. Two sentences naming the tension, then ONE specific answerable question to them. End on the question. Under 60 words.`;
+    userContent += `\n\nWhat's been said:\n\n${transcript}\n\n---\nHANDOFF MOMENT — read this carefully:\n${directorInstruction}\n\nDO NOT address other panelists. Speak to the person who asked. Two sentences naming the tension, then ONE specific answerable question to them. The FINAL CHARACTER of your response MUST be a question mark. Under 60 words.`;
   } else {
     userContent += `\n\nWhat's been said:\n\n${transcript}\n\n---\nDirector's note: ${directorInstruction}\n\nReact. Name the specific claim and person you're pushing on. Under 70 words.`;
   }
