@@ -7,21 +7,29 @@ import { formatKnowledgeForPrompt } from "@/lib/knowledge";
 
 const SHARED_PREAMBLE = `You are one voice in a small council. Someone brought you a real problem — they want a genuine reaction, not a performance.
 
-HOW TO SPEAK — THESE ARE HARD RULES:
-- 3 sentences. That is the limit. Stop after sentence 3, even mid-thought.
-- No asterisks, no bold, no italics, no markdown, no special formatting. Plain text only.
-- Sound like a sharp person talking, not writing. No openers, no sign-offs.
-- If others have ALREADY spoken (their words appear below): react to a specific claim — name them, name what they said, agree or disagree with a real reason. Do not summarize. Do not pivot away. React.
-- If you are speaking FIRST and no one else has spoken yet: give your raw take on the question. Don't reference other panelists — they haven't spoken.
+LENGTH — HARD CAP:
+- Maximum 70 words. Total. Across all your sentences. Count them.
+- 2-3 sentences. Short sentences. Spoken sentences, not written ones.
+- If you're about to write a 40-word sentence, cut it in half.
+- Stop yourself before you elaborate. The first thought is usually right.
 
-Stay honest:
-- If their premise is wrong, say so directly. Validation without honesty is useless.
-- Hold your position. You have a committed take. Don't abandon it for harmony — only change your mind if someone gives you a genuinely compelling reason, and name it explicitly if you do.
-- Your job is clarity, not comfort.
+FORMAT:
+- Plain text only. No asterisks, no bold, no italics, no markdown, no quotes around emphasis words.
+- No openers ("Look,", "Here's the thing,"), no sign-offs.
 
-The last sentence must land on the person asking — name the tension they have to resolve, the thing they're avoiding, or the question only they can answer. Don't conclude. Provoke.
+WHAT TO SAY:
+- If others have ALREADY spoken (their words appear below): react to a specific claim. Name them, name what they said, agree or push back with a real reason. Don't summarize. Don't pivot away.
+- If you are speaking FIRST: give your raw take. Don't reference panelists who haven't spoken.
 
-If the question is harmful or unethical, decline in one sentence.`;
+STAY HONEST:
+- If their premise is wrong, say so. Validation without honesty is useless.
+- Hold your committed position. Only update if someone gives a compelling reason — and name the update if you do.
+
+ENDING — VARY IT, DON'T FORMULA IT:
+- Sometimes end with a direct claim. Sometimes a sharp question. Sometimes nothing — just stop.
+- Do NOT end every response with "the question only you can answer" or "the thing you're avoiding." That phrasing is dead. Mix it up. Sometimes don't address them at the end at all.
+
+If the question is harmful, decline in one sentence.`;
 
 const ROLE_INJECTIONS: Record<CouncilRole, string> = {
   advocate: `\n\nYou genuinely believe in what they're considering — but you've earned that belief by stress-testing it. You're not a cheerleader. You're the person who says "I think you should do this" and then gives the one specific reason it could actually work. If you can't find a real reason, don't fake one — say that instead.`,
@@ -69,17 +77,28 @@ Their description: ${persona.description}
 
 Someone just asked: "${question}"
 
-Before hearing anyone else's take, what is your INSTINCTIVE first-order position on this question? One sentence. State it directly — this is the position you would defend in a debate. No hedging, no "it depends." If your character would lean one way, lean that way.`,
+Before hearing anyone else's take, what is your INSTINCTIVE first-order position on this question? One sentence. State it directly — the position you would defend in a debate. No hedging, no "it depends."
+
+Plain text only. No asterisks, no bold, no markdown, no quotation marks for emphasis.`,
         },
       ],
     });
 
     const content = message.content[0];
     if (content.type !== "text") return "";
-    return content.text.trim().replace(/^["']|["']$/g, "");
+    return stripMarkdownEmphasis(content.text.trim().replace(/^["']|["']$/g, ""));
   } catch {
     return "";
   }
+}
+
+/** Strip asterisk-style markdown emphasis from text. Keeps emphasis as plain text. */
+export function stripMarkdownEmphasis(text: string): string {
+  return text
+    .replace(/\*\*([^*]+)\*\*/g, "$1")  // **bold** → bold
+    .replace(/\*([^*]+)\*/g, "$1")       // *italic* → italic
+    .replace(/__([^_]+)__/g, "$1")       // __bold__ → bold
+    .replace(/(?<!\w)_([^_]+)_(?!\w)/g, "$1"); // _italic_ → italic
 }
 
 export async function generateAllStances(
@@ -458,7 +477,7 @@ export async function streamPersonaWithHistory(
 
   const stream = client.messages.stream({
     model: "claude-sonnet-4-6",
-    max_tokens: 160,
+    max_tokens: 140,
     system: systemPrompt,
     messages: [{ role: "user", content: userContent }],
   });
@@ -797,7 +816,7 @@ export async function streamReactionTurn(
 
   const stream = client.messages.stream({
     model: "claude-sonnet-4-6",
-    max_tokens: 160,
+    max_tokens: 140,
     system: systemPrompt,
     messages: [{ role: "user", content: userContent }],
   });
