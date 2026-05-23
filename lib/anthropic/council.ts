@@ -17,6 +17,7 @@ Don't be sycophantic:
 - If their premise is wrong or incomplete, say so. Validation without honesty is useless.
 - Disagree with other panelists when you actually disagree. Artificial consensus is worse than silence.
 - Your job is clarity, not comfort.
+- You have a committed position based on your character. Do not abandon it for conversational harmony. If a panelist genuinely changes your mind, name the update explicitly — but only then.
 
 End by landing it:
 - Your last sentence goes back to the person asking. Name the specific tension they have to resolve, the decision only they can make, or the one thing they're avoiding. Don't conclude — provoke.
@@ -43,11 +44,121 @@ export type PriorRound = {
   summary?: string;
 };
 
+export type StanceMap = Record<string, string>;
+
+// ── Stance Priming: invisible Haiku call per persona before Phase 1 ──
+// Generates each persona's instinctive first-order position so they have
+// a "committed stance" to defend through the conversation.
+export async function generateCommittedStance(
+  member: CouncilMember,
+  question: string
+): Promise<string> {
+  const persona = getPersonaById(member.personaId) || getDomainExpertById(member.personaId);
+  if (!persona) return "";
+
+  const client = getAnthropicClient();
+  try {
+    const message = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 80,
+      messages: [
+        {
+          role: "user",
+          content: `You are ${persona.name}. ${persona.tagline}.
+
+Their description: ${persona.description}
+
+Someone just asked: "${question}"
+
+Before hearing anyone else's take, what is your INSTINCTIVE first-order position on this question? One sentence. State it directly — this is the position you would defend in a debate. No hedging, no "it depends." If your character would lean one way, lean that way.`,
+        },
+      ],
+    });
+
+    const content = message.content[0];
+    if (content.type !== "text") return "";
+    return content.text.trim().replace(/^["']|["']$/g, "");
+  } catch {
+    return "";
+  }
+}
+
+export async function generateAllStances(
+  members: CouncilMember[],
+  question: string
+): Promise<StanceMap> {
+  const result: StanceMap = {};
+  await Promise.all(
+    members.map(async (m) => {
+      const stance = await generateCommittedStance(m, question);
+      if (stance) result[m.personaId] = stance;
+    })
+  );
+  return result;
+}
+
+// ── Move type classification (for director) ──
+export type MoveType = "PROPOSAL" | "CHALLENGE" | "QUESTION" | "BUILD" | "BRIDGE" | "CONCESSION" | "REFRAME" | "OBSERVATION";
+
+export async function classifyMove(
+  turn: ConversationTurn,
+  roster: Array<{ personaId: string; name: string }>
+): Promise<{ moveType: MoveType; addressedTo: string | null }> {
+  const speakerName =
+    roster.find((r) => r.personaId === turn.personaId)?.name ?? turn.personaId;
+
+  const client = getAnthropicClient();
+  try {
+    const message = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 80,
+      messages: [
+        {
+          role: "user",
+          content: `Classify this conversational move from a panel discussion.
+
+${speakerName} said: "${turn.response}"
+
+Other panelists: ${roster.filter((r) => r.personaId !== turn.personaId).map((r) => r.name).join(", ")}
+
+Move types:
+- PROPOSAL: stakes a new claim or recommendation
+- CHALLENGE: pushes back on a specific prior claim (names someone)
+- QUESTION: directly asks another panelist something
+- BUILD: extends a prior claim in the same direction
+- BRIDGE: connects two opposing positions
+- CONCESSION: partial agreement with a pivot
+- REFRAME: shifts what the question itself is asking
+- OBSERVATION: notes something without demanding response
+
+Also identify the PERSON this is addressed to by name (if any). Use exact panelist names from the list above, or null.
+
+Return ONLY JSON: {"moveType":"...", "addressedTo": "PanelistName" | null}`,
+        },
+      ],
+    });
+
+    const content = message.content[0];
+    if (content.type !== "text") return { moveType: "OBSERVATION", addressedTo: null };
+    const jsonMatch = content.text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return { moveType: "OBSERVATION", addressedTo: null };
+    const parsed = JSON.parse(jsonMatch[0]);
+    return {
+      moveType: (parsed.moveType as MoveType) ?? "OBSERVATION",
+      addressedTo: typeof parsed.addressedTo === "string" ? parsed.addressedTo : null,
+    };
+  } catch {
+    return { moveType: "OBSERVATION", addressedTo: null };
+  }
+}
+
 export function buildSystemPrompt(
   member: CouncilMember,
   roster?: CouncilMember[],
   memories?: MemoryEntry[],
-  knowledge?: string[]
+  knowledge?: string[],
+  committedStance?: string,
+  panelistDescriptions?: Array<{ personaId: string; name: string; tagline: string; role: CouncilRole; stance?: string }>
 ): string {
   const persona = getPersonaById(member.personaId) || getDomainExpertById(member.personaId);
   if (!persona) throw new Error(`Persona not found: ${member.personaId}`);
@@ -56,8 +167,20 @@ export function buildSystemPrompt(
 
   prompt += ROLE_INJECTIONS[member.role];
 
-  // Roster awareness — tell persona who else is on the panel
-  if (roster && roster.length > 1) {
+  // Inter-persona awareness — who's in the room, what they're likely to say
+  if (panelistDescriptions && panelistDescriptions.length > 0) {
+    const others = panelistDescriptions.filter((p) => p.personaId !== member.personaId);
+    if (others.length > 0) {
+      const intro = `\n\nYou are on this panel with:`;
+      const descriptions = others.map((p) => {
+        const roleHint = p.role !== "default" ? ` [${p.role}]` : "";
+        const stanceHint = p.stance ? ` Their instinctive take: "${p.stance}"` : "";
+        return `- ${p.name}${roleHint} — ${p.tagline}.${stanceHint}`;
+      });
+      prompt += `${intro}\n${descriptions.join("\n")}\n\nWhen reacting, address them by name. Where you genuinely disagree with their take, say so directly.`;
+    }
+  } else if (roster && roster.length > 1) {
+    // Fallback: simple awareness if no detailed descriptions
     const otherPanelists = roster
       .filter((m) => m.personaId !== member.personaId && m.role !== "moderator")
       .map((m) => {
@@ -68,6 +191,11 @@ export function buildSystemPrompt(
     if (otherPanelists.length > 0) {
       prompt += `\n\nYou're on a panel with: ${otherPanelists.join(", ")}. Address them by name when reacting to what they said.`;
     }
+  }
+
+  // Committed stance — the position this persona will defend
+  if (committedStance) {
+    prompt += `\n\nYOUR COMMITTED POSITION on this question: "${committedStance}"\n\nThis is where you start. Defend it unless a panelist genuinely changes your mind with a compelling argument. If you do update, name the update explicitly.`;
   }
 
   if (member.attributes?.focusArea) {
@@ -87,13 +215,11 @@ export function buildSystemPrompt(
     }
   }
 
-  // Knowledge injection — grounded frameworks for this persona, retrieved per question
   const knowledgeBlock = formatKnowledgeForPrompt(knowledge ?? []);
   if (knowledgeBlock) {
     prompt += `\n\n${knowledgeBlock}`;
   }
 
-  // Memory injection — what this persona knows about the user from past sessions
   if (memories && memories.length > 0) {
     const memoryBlock = formatMemoriesForPrompt(memories);
     if (memoryBlock) {
@@ -144,7 +270,6 @@ export async function callPersonaWithHistory(
     userContent = parts.join("\n\n");
   }
 
-  // Inject within-question history (other personas who've already spoken this round)
   if (history.length > 0) {
     const historyText = history
       .map(({ name, role, response }) => {
@@ -183,41 +308,6 @@ export async function callPersona(
   return callPersonaWithHistory(member, question, []);
 }
 
-export async function callModerator(
-  moderatorMember: CouncilMember,
-  question: string,
-  otherResponses: Record<string, PersonaResponse>
-): Promise<string> {
-  const client = getAnthropicClient();
-  const persona =
-    getPersonaById(moderatorMember.personaId) ||
-    getDomainExpertById(moderatorMember.personaId);
-  if (!persona) throw new Error(`Persona not found: ${moderatorMember.personaId}`);
-
-  const conversationText = Object.entries(otherResponses)
-    .map(([personaId, { response, role }]) => {
-      const p = getPersonaById(personaId) || getDomainExpertById(personaId);
-      const roleLabel = role !== "default" ? ` [${role}]` : "";
-      return `${p?.name ?? personaId}${roleLabel} said: "${response}"`;
-    })
-    .join("\n\n");
-
-  const systemPrompt = `${persona.systemPrompt}\n\n${SHARED_PREAMBLE}${ROLE_INJECTIONS.moderator}`;
-
-  const userContent = `Question: "${question}"\n\nThe panel discussion:\n\n${conversationText}\n\nName the specific tension between panelists. Who disagreed and on what? Take a side in 2-3 sentences.`;
-
-  const message = await client.messages.create({
-    model: "claude-sonnet-4-6",
-    max_tokens: 300,
-    system: systemPrompt,
-    messages: [{ role: "user", content: userContent }],
-  });
-
-  const content = message.content[0];
-  if (content.type !== "text") throw new Error("Unexpected response type");
-  return content.text;
-}
-
 export async function generateAutoSummary(
   question: string,
   responses: Record<string, PersonaResponse>
@@ -238,7 +328,7 @@ export async function generateAutoSummary(
     messages: [
       {
         role: "user",
-        content: `You just observed a conversation between advisors about: "${question}"\n\nThe conversation:\n\n${conversationText}\n\nIn under 120 words, tell the person asking: what was the real tension in this room, and the one question they need to sit with. Speak directly to them. No bullet points.`,
+        content: `You just observed a conversation between advisors about: "${question}"\n\nThe conversation:\n\n${conversationText}\n\nIn under 120 words, tell the person asking: what was the real tension in this room, and the one question they need to sit with. Name where it didn't resolve. Speak directly to them. No bullet points.`,
       },
     ],
   });
@@ -301,48 +391,6 @@ export async function generateCouncilTitle(question: string): Promise<string> {
   return content.text.trim();
 }
 
-/**
- * Stream a persona's introduction (used during intro phase)
- * Each persona gives a brief self-introduction
- */
-export async function streamPersonaIntroduction(
-  member: CouncilMember,
-  onToken: (text: string) => void
-): Promise<PersonaResponse> {
-  const persona = getPersonaById(member.personaId) || getDomainExpertById(member.personaId);
-  if (!persona) throw new Error(`Persona not found: ${member.personaId}`);
-
-  // Use the persona's introduction field directly
-  const introductionText = persona.introduction ||
-    `I'm ${persona.name}. ${persona.tagline}. I'm here to bring my perspective to the conversation.`;
-
-  const client = getAnthropicClient();
-  const systemPrompt = `You are introducing yourself briefly and warmly to a council meeting. You're about to have a conversation with others. Keep it personal and genuine — 20-40 words. Just say who you are, why you're here, and what you bring.`;
-
-  const stream = client.messages.stream({
-    model: "claude-sonnet-4-6",
-    max_tokens: 80,
-    system: systemPrompt,
-    messages: [{
-      role: "user",
-      content: `Introduce yourself warmly, briefly, like you're meeting a small group: "${introductionText}"`
-    }],
-  });
-
-  let fullText = "";
-  for await (const event of stream) {
-    if (
-      event.type === "content_block_delta" &&
-      event.delta.type === "text_delta"
-    ) {
-      onToken(event.delta.text);
-      fullText += event.delta.text;
-    }
-  }
-
-  return { response: fullText, role: member.role };
-}
-
 export async function streamPersonaWithHistory(
   member: CouncilMember,
   question: string,
@@ -352,10 +400,20 @@ export async function streamPersonaWithHistory(
   onToken: (text: string) => void,
   roster?: CouncilMember[],
   memories?: MemoryEntry[],
-  knowledge?: string[]
+  knowledge?: string[],
+  committedStance?: string,
+  panelistDescriptions?: Array<{ personaId: string; name: string; tagline: string; role: CouncilRole; stance?: string }>,
+  isLastInPhase1?: boolean
 ): Promise<PersonaResponse> {
   const client = getAnthropicClient();
-  const systemPrompt = buildSystemPrompt(member, roster, memories, knowledge);
+  const systemPrompt = buildSystemPrompt(
+    member,
+    roster,
+    memories,
+    knowledge,
+    committedStance,
+    panelistDescriptions
+  );
 
   let userContent = question;
   const hasContext = conversationSummary || recentRounds.length > 0;
@@ -393,15 +451,21 @@ export async function streamPersonaWithHistory(
       .join("\n\n");
 
     if (hasContext) {
-      userContent += `\n\n---\nWhat others have said so far:\n\n${historyText}\n\nReact to what they said — agree, challenge, or build on something specific. Now it's your turn.`;
+      userContent += `\n\n---\nWhat others have said so far in this round:\n\n${historyText}\n\nReact to them specifically. Name them by name. Either build with a reason or push back hard.`;
     } else {
-      userContent = `${question}\n\n---\nWhat others have said so far:\n\n${historyText}\n\nReact to what they said — agree, challenge, or build on something specific. Now it's your turn.`;
+      userContent = `${question}\n\n---\nWhat others have said so far in this round:\n\n${historyText}\n\nReact to them specifically. Name them by name. Either build with a reason or push back hard.`;
     }
+  }
+
+  // Adjacency pair forcing: every Phase 1 response should chain to a peer.
+  // Skip on the last speaker (they end with a redirect to the user instead).
+  if (panelistDescriptions && panelistDescriptions.length > 1 && !isLastInPhase1) {
+    userContent += `\n\nIMPORTANT: Your last sentence should directly address one of your fellow panelists by name — either with a sharp question or a specific challenge to a position you think they'd take. Set up the next person.`;
   }
 
   const stream = client.messages.stream({
     model: "claude-sonnet-4-6",
-    max_tokens: 200,
+    max_tokens: 220,
     system: systemPrompt,
     messages: [{ role: "user", content: userContent }],
   });
@@ -427,7 +491,9 @@ export async function streamModerator(
   onToken: (text: string) => void,
   turns?: ConversationTurn[],
   memories?: MemoryEntry[],
-  knowledge?: string[]
+  knowledge?: string[],
+  committedStance?: string,
+  panelistDescriptions?: Array<{ personaId: string; name: string; tagline: string; role: CouncilRole; stance?: string }>
 ): Promise<string> {
   const client = getAnthropicClient();
   const persona =
@@ -435,7 +501,6 @@ export async function streamModerator(
     getDomainExpertById(moderatorMember.personaId);
   if (!persona) throw new Error(`Persona not found: ${moderatorMember.personaId}`);
 
-  // Use turns transcript if available, otherwise fall back to flat responses
   let conversationText: string;
   if (turns && turns.length > 0) {
     conversationText = turns
@@ -455,14 +520,19 @@ export async function streamModerator(
       .join("\n\n");
   }
 
-  const memoryBlock = memories && memories.length > 0 ? formatMemoriesForPrompt(memories) : "";
-  const knowledgeBlock = formatKnowledgeForPrompt(knowledge ?? []);
-  const systemPrompt = `${persona.systemPrompt}\n\n${SHARED_PREAMBLE}${ROLE_INJECTIONS.moderator}${knowledgeBlock ? `\n\n${knowledgeBlock}` : ""}${memoryBlock ? `\n\n${memoryBlock}\n\nLet this context inform how you engage — don't quote memories back at them, but let it shape the depth and specificity of your response.` : ""}`;
-  const userContent = `Question: "${question}"\n\nThe panel discussion:\n\n${conversationText}\n\nName the specific tension between panelists. Who disagreed and on what? Who's dodging something? Take a side in 2-3 sentences.`;
+  const systemPrompt = buildSystemPrompt(
+    moderatorMember,
+    undefined,
+    memories,
+    knowledge,
+    committedStance,
+    panelistDescriptions
+  );
+  const userContent = `Question: "${question}"\n\nThe panel discussion:\n\n${conversationText}\n\nName the specific tension between panelists. Who disagreed and on what? Who's dodging something? Take a side in 2-3 sentences. Don't tie a neat bow — name what didn't resolve.`;
 
   const stream = client.messages.stream({
     model: "claude-sonnet-4-6",
-    max_tokens: 200,
+    max_tokens: 220,
     system: systemPrompt,
     messages: [{ role: "user", content: userContent }],
   });
@@ -488,7 +558,6 @@ export async function generateFollowUpChips(
 ): Promise<string[]> {
   const client = getAnthropicClient();
 
-  // Use turns transcript if available
   let conversationText: string;
   if (turns && turns.length > 0) {
     conversationText = turns
@@ -523,13 +592,11 @@ export async function generateFollowUpChips(
     const content = message.content[0];
     if (content.type !== "text") return [];
 
-    // Try JSON parse first
     const text = content.text.trim();
     try {
       const parsed = JSON.parse(text);
       if (Array.isArray(parsed)) return parsed.slice(0, 3).map(String);
     } catch {
-      // Regex fallback: extract quoted strings
       const matches = text.match(/"([^"]+)"/g);
       if (matches) return matches.slice(0, 3).map((s) => s.replace(/"/g, ""));
     }
@@ -539,13 +606,14 @@ export async function generateFollowUpChips(
   }
 }
 
-// ── AI Director: decides who speaks next in reaction phase ──
+// ── AI Director with Move Awareness ──
 
 export async function callDirector(
   question: string,
   roster: Array<{ personaId: string; name: string; role: CouncilRole }>,
   turnsSoFar: ConversationTurn[],
-  turnsRemaining: number
+  turnsRemaining: number,
+  lastMoveContext?: { moveType: MoveType; addressedTo: string | null }
 ): Promise<DirectorDecision> {
   const client = getAnthropicClient();
 
@@ -564,7 +632,6 @@ export async function callDirector(
     })
     .join("\n\n");
 
-  // Track reaction counts per persona
   const reactionCounts: Record<string, number> = {};
   for (const t of turnsSoFar.filter((t) => t.phase === "reaction")) {
     reactionCounts[t.personaId] = (reactionCounts[t.personaId] ?? 0) + 1;
@@ -573,9 +640,19 @@ export async function callDirector(
     (r) => (reactionCounts[r.personaId] ?? 0) < 2
   );
 
-  const eligibleText = eligibleRoster
-    .map((r) => r.personaId)
-    .join(", ");
+  const eligibleText = eligibleRoster.map((r) => r.personaId).join(", ");
+
+  const moveContextBlock = lastMoveContext
+    ? `\n\nThe last turn was classified as: ${lastMoveContext.moveType}${lastMoveContext.addressedTo ? `, addressed to ${lastMoveContext.addressedTo}` : ""}.
+
+Conditional relevance rules:
+- After a CHALLENGE addressed to a named panelist → that panelist responds (highest priority)
+- After a QUESTION addressed to a named panelist → that panelist responds
+- After a PROPOSAL → whoever has the strongest opposing view responds
+- After a BUILD or BRIDGE → anyone with a fresh angle responds
+- After a CONCESSION → original challenger acknowledges or extends
+- After a REFRAME → anyone willing to engage the new frame responds`
+    : "";
 
   try {
     const message = await client.messages.create({
@@ -584,7 +661,7 @@ export async function callDirector(
       messages: [
         {
           role: "user",
-          content: `You are an invisible conversation director for a panel discussion. Decide who should speak next to create the most engaging exchange.
+          content: `You are an invisible conversation director for a panel discussion. Decide who speaks next to create the most engaging exchange.
 
 PANELISTS:
 ${rosterText}
@@ -595,12 +672,12 @@ CONVERSATION SO FAR:
 ${turnsSummary}
 
 ELIGIBLE TO REACT (max 2 reactions each): ${eligibleText}
-REACTION TURNS REMAINING: ${turnsRemaining}
+REACTION TURNS REMAINING: ${turnsRemaining}${moveContextBlock}
 
 Rules:
-- Pick the person who has the strongest counter-perspective or was most directly challenged.
-- Prefer to continue unless: (a) turnsRemaining is 0, (b) the eligible list is empty, or (c) the last 2+ turns were genuinely repetitive. Disagreement and tension are features, not reasons to stop.
-- The instruction should be specific: name exactly what to react to (e.g., "Push back on X's claim that Y is the main risk").
+- Honor conditional relevance first — if someone was directly named, they should respond.
+- Prefer to continue. Only set shouldContinue=false if turnsRemaining is 0, eligible list is empty, or last 2+ turns are clearly repetitive.
+- The instruction should be SPECIFIC: name what claim to react to and from whom.
 
 Return ONLY valid JSON:
 {"nextSpeaker": "<personaId>", "instruction": "<what to react to, 1 sentence>", "shouldContinue": true/false}`,
@@ -630,7 +707,7 @@ Return ONLY valid JSON:
   }
 }
 
-// ── Reaction Turn: persona reacts to the conversation with director guidance ──
+// ── Reaction Turn with targeted context windows ──
 
 export async function streamReactionTurn(
   member: CouncilMember,
@@ -642,23 +719,60 @@ export async function streamReactionTurn(
   conversationSummary: string | undefined,
   onToken: (text: string) => void,
   memories?: MemoryEntry[],
-  knowledge?: string[]
+  knowledge?: string[],
+  committedStance?: string,
+  panelistDescriptions?: Array<{ personaId: string; name: string; tagline: string; role: CouncilRole; stance?: string }>
 ): Promise<PersonaResponse> {
   const client = getAnthropicClient();
-  const systemPrompt = buildSystemPrompt(member, roster, memories, knowledge);
+  const systemPrompt = buildSystemPrompt(
+    member,
+    roster,
+    memories,
+    knowledge,
+    committedStance,
+    panelistDescriptions
+  );
 
-  // Build conversation transcript from turns
-  const transcript = allTurns
+  // Targeted context: only include the most relevant turns, not the full transcript
+  // Strategy:
+  //   - This persona's own most recent turn (so they remember what they said)
+  //   - The last 2 turns (immediate conversational context)
+  //   - Any turn that mentions this persona by name (someone addressing them)
+  const myLastTurn = [...allTurns].reverse().find((t) => t.personaId === member.personaId);
+  const personaName =
+    getPersonaById(member.personaId)?.name ||
+    getDomainExpertById(member.personaId)?.name ||
+    member.personaId;
+  const myFirstName = personaName.replace(/^The\s/, "").split(" ")[0];
+
+  const lastN = allTurns.slice(-3);
+  const mentioningMe = allTurns.filter(
+    (t) =>
+      t.personaId !== member.personaId &&
+      (t.response.includes(personaName) || t.response.includes(myFirstName))
+  );
+
+  const relevantSet = new Set<number>();
+  if (myLastTurn) relevantSet.add(myLastTurn.turnIndex);
+  for (const t of lastN) relevantSet.add(t.turnIndex);
+  for (const t of mentioningMe) relevantSet.add(t.turnIndex);
+
+  const relevantTurns = allTurns
+    .filter((t) => relevantSet.has(t.turnIndex))
+    .sort((a, b) => a.turnIndex - b.turnIndex);
+
+  const transcript = relevantTurns
     .map((t) => {
       const p = getPersonaById(t.personaId) || getDomainExpertById(t.personaId);
       const roleLabel = t.role !== "default" ? ` [${t.role}]` : "";
-      return `${p?.name ?? t.personaId}${roleLabel} said: "${t.response}"`;
+      const isMe = t.personaId === member.personaId;
+      const prefix = isMe ? `YOU (${p?.name ?? t.personaId})${roleLabel} said earlier` : `${p?.name ?? t.personaId}${roleLabel} said`;
+      return `${prefix}: "${t.response}"`;
     })
     .join("\n\n");
 
   let userContent = "";
 
-  // Add cross-round context if this is a follow-up conversation
   const hasContext = conversationSummary || recentRounds.length > 0;
   if (hasContext) {
     const parts: string[] = ["This is a follow-up in an ongoing conversation."];
@@ -686,11 +800,11 @@ export async function streamReactionTurn(
     userContent = `Question: "${question}"`;
   }
 
-  userContent += `\n\nThe panel discussion so far:\n\n${transcript}\n\n---\n${directorInstruction}\nNow respond.`;
+  userContent += `\n\nWhat's most relevant from the panel so far:\n\n${transcript}\n\n---\n${directorInstruction}\n\nOpen by naming the specific claim and person you're responding to. Then say your piece. Don't summarize — engage directly.`;
 
   const stream = client.messages.stream({
     model: "claude-sonnet-4-6",
-    max_tokens: 180,
+    max_tokens: 200,
     system: systemPrompt,
     messages: [{ role: "user", content: userContent }],
   });
@@ -709,7 +823,7 @@ export async function streamReactionTurn(
   return { response: fullText, role: member.role };
 }
 
-// ── Session Artifact: what the user came in with vs. what they're leaving with ──
+// ── Session Artifact ──
 
 export async function generateSessionArtifact(
   question: string,

@@ -1,73 +1,42 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Loader2, Users, LayoutGrid, MessageSquare, ThumbsUp, BarChart2 } from "lucide-react";
+import { Loader2, Sparkles } from "lucide-react";
+import { formatRelativeTime } from "@/lib/utils";
 
-interface TopPersona {
+interface Advisor {
   id: string;
   name: string;
+  tagline: string;
   colorHex: string;
-  count: number;
+  icon: string | null;
+  count?: number;
+  observations?: number;
+}
+
+interface RecentQuestion {
+  user_prompt: string;
+  created_at: string;
+}
+
+interface TopMemory {
+  personaId: string;
+  personaName: string;
+  content: string;
+  importance: number;
+  memoryType: string;
 }
 
 interface AnalyticsData {
-  platform: {
-    totalUsers: number;
-    totalCouncils: number;
-    totalQuestions: number;
-  } | null;
-  personal: {
-    councils: number;
-    questions: number;
-    feedback: number;
-    avgQuestionsPerCouncil: number;
-    topPersonas: TopPersona[];
-    roleBreakdown: Record<string, number>;
-  };
+  totalSessions: number;
+  totalQuestions: number;
+  recentQuestions: RecentQuestion[];
+  topAdvisors: Advisor[];
+  advisorsKnowingYou: Advisor[];
+  topMemories: TopMemory[];
 }
 
-function StatCard({
-  label,
-  value,
-  icon: Icon,
-  sub,
-}: {
-  label: string;
-  value: string | number;
-  icon: React.ElementType;
-  sub?: string;
-}) {
-  return (
-    <div className="flex flex-col gap-3 px-5 py-4 rounded-xl border border-surface-border bg-surface-raised">
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-text-muted uppercase tracking-wider">{label}</span>
-        <Icon size={15} className="text-text-muted" />
-      </div>
-      <div>
-        <p className="text-3xl font-semibold text-text-primary">{value}</p>
-        {sub && <p className="text-xs text-text-muted mt-1">{sub}</p>}
-      </div>
-    </div>
-  );
-}
-
-const ROLE_LABELS: Record<string, string> = {
-  advocate: "Advocate",
-  critic: "Critic",
-  moderator: "Moderator",
-  questioner: "Questioner",
-  default: "Open",
-};
-
-const ROLE_COLORS: Record<string, string> = {
-  advocate: "#22c55e",
-  critic: "#ef4444",
-  moderator: "#a855f7",
-  questioner: "#3b82f6",
-  default: "#6B7280",
-};
-
-export default function AnalyticsPage() {
+export default function PatternsPage() {
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -75,11 +44,11 @@ export default function AnalyticsPage() {
   useEffect(() => {
     fetch("/api/analytics")
       .then((r) => {
-        if (!r.ok) throw new Error("Failed to load analytics");
+        if (!r.ok) throw new Error("Failed to load");
         return r.json();
       })
       .then(setData)
-      .catch(() => setError("Could not load analytics. Please refresh."))
+      .catch(() => setError("Could not load your patterns. Please refresh."))
       .finally(() => setLoading(false));
   }, []);
 
@@ -105,125 +74,166 @@ export default function AnalyticsPage() {
     );
   }
 
-  const { platform, personal } = data;
-  const maxPersonaCount = personal.topPersonas[0]?.count ?? 1;
-  const totalRoles = Object.values(personal.roleBreakdown).reduce((a, b) => a + b, 0);
+  const { totalSessions, totalQuestions, recentQuestions, topAdvisors, advisorsKnowingYou, topMemories } = data;
+  const maxCount = topAdvisors[0]?.count ?? 1;
+  const hasAnyData = totalSessions > 0;
 
   return (
-    <div className="max-w-3xl mx-auto px-6 py-10 space-y-10">
+    <div className="max-w-2xl mx-auto px-6 py-10 space-y-12">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-semibold text-text-primary mb-1">Analytics</h1>
-        <p className="text-sm text-text-secondary">Usage overview and activity breakdown.</p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-serif italic text-text-primary mb-1">Patterns</h1>
+          <p className="text-sm text-text-secondary">How you think with your council.</p>
+        </div>
+        {hasAnyData && (
+          <div className="flex items-center gap-4 text-xs text-text-muted pt-1">
+            <span><span className="text-text-primary font-medium">{totalSessions}</span> sessions</span>
+            <span><span className="text-text-primary font-medium">{totalQuestions}</span> questions</span>
+          </div>
+        )}
       </div>
 
-      {/* Platform Overview */}
-      {platform && (
-        <section>
-          <h2 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-4">
-            Platform Overview
-          </h2>
-          <div className="grid grid-cols-3 gap-3">
-            <StatCard label="Total Users" value={platform.totalUsers} icon={Users} />
-            <StatCard label="Total Councils" value={platform.totalCouncils} icon={LayoutGrid} />
-            <StatCard label="Total Questions" value={platform.totalQuestions} icon={MessageSquare} />
-          </div>
-        </section>
-      )}
-
-      {/* Your Activity */}
-      <section>
-        <h2 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-4">
-          Your Activity
-        </h2>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <StatCard label="Councils" value={personal.councils} icon={LayoutGrid} />
-          <StatCard label="Questions" value={personal.questions} icon={MessageSquare} />
-          <StatCard label="Feedback" value={personal.feedback} icon={ThumbsUp} />
-          <StatCard
-            label="Avg / Council"
-            value={personal.avgQuestionsPerCouncil}
-            icon={BarChart2}
-            sub="questions per council"
-          />
+      {!hasAnyData ? (
+        <div className="text-center py-20">
+          <Sparkles size={32} className="text-text-muted mx-auto mb-3 opacity-40" />
+          <p className="text-sm text-text-secondary mb-1">No patterns yet</p>
+          <p className="text-xs text-text-muted">Start a few sessions and your thinking patterns will appear here.</p>
         </div>
-      </section>
-
-      {/* Top Personas */}
-      {personal.topPersonas.length > 0 && (
-        <section>
-          <h2 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-4">
-            Your Top Personas
-          </h2>
-          <div className="rounded-xl border border-surface-border bg-surface-raised divide-y divide-surface-border overflow-hidden">
-            {personal.topPersonas.map((p) => (
-              <div key={p.id} className="px-5 py-3.5 flex items-center gap-4">
-                {/* Color dot */}
-                <div
-                  className="w-2.5 h-2.5 rounded-full shrink-0"
-                  style={{ backgroundColor: p.colorHex }}
-                />
-                {/* Name */}
-                <span className="text-sm text-text-primary w-48 truncate">{p.name}</span>
-                {/* Bar */}
-                <div className="flex-1 h-1.5 bg-surface-overlay rounded-full overflow-hidden">
+      ) : (
+        <>
+          {/* Advisors who know you */}
+          {advisorsKnowingYou.length > 0 && (
+            <section>
+              <h2 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-4">
+                Advisors who know you
+              </h2>
+              <p className="text-xs text-text-muted mb-4 -mt-2">
+                These advisors have built context from your past conversations.
+              </p>
+              <div className="space-y-2">
+                {advisorsKnowingYou.map((a) => (
                   <div
-                    className="h-full rounded-full transition-all"
-                    style={{
-                      width: `${Math.round((p.count / maxPersonaCount) * 100)}%`,
-                      backgroundColor: p.colorHex,
-                    }}
-                  />
-                </div>
-                {/* Count */}
-                <span className="text-xs text-text-muted w-16 text-right shrink-0">
-                  {p.count} {p.count === 1 ? "council" : "councils"}
-                </span>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Role Breakdown */}
-      {totalRoles > 0 && (
-        <section>
-          <h2 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-4">
-            Role Usage
-          </h2>
-          <div className="rounded-xl border border-surface-border bg-surface-raised divide-y divide-surface-border overflow-hidden">
-            {Object.entries(personal.roleBreakdown)
-              .filter(([, count]) => count > 0)
-              .sort(([, a], [, b]) => b - a)
-              .map(([role, count]) => (
-                <div key={role} className="px-5 py-3.5 flex items-center gap-4">
-                  {/* Color dot */}
-                  <div
-                    className="w-2.5 h-2.5 rounded-full shrink-0"
-                    style={{ backgroundColor: ROLE_COLORS[role] ?? "#6B7280" }}
-                  />
-                  {/* Role name */}
-                  <span className="text-sm text-text-primary w-32">
-                    {ROLE_LABELS[role] ?? role}
-                  </span>
-                  {/* Bar */}
-                  <div className="flex-1 h-1.5 bg-surface-overlay rounded-full overflow-hidden">
+                    key={a.id}
+                    className="flex items-center gap-3 px-4 py-3 rounded-xl border border-surface-border bg-surface-raised"
+                    style={{ borderLeftWidth: 3, borderLeftColor: a.colorHex }}
+                  >
                     <div
-                      className="h-full rounded-full transition-all"
-                      style={{
-                        width: `${Math.round((count / totalRoles) * 100)}%`,
-                        backgroundColor: ROLE_COLORS[role] ?? "#6B7280",
-                      }}
-                    />
+                      className="w-7 h-7 rounded-lg flex items-center justify-center text-sm shrink-0"
+                      style={{ backgroundColor: `${a.colorHex}22` }}
+                    >
+                      {a.icon ?? (
+                        <span className="text-xs font-bold" style={{ color: a.colorHex }}>
+                          {a.name[0]}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-serif italic text-text-primary truncate">{a.name}</p>
+                      <p className="text-[10px] text-text-muted truncate">{a.tagline}</p>
+                    </div>
+                    <span className="inline-flex items-center gap-1 text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-violet-500/15 border border-violet-500/30 text-violet-300 shrink-0">
+                      <span className="w-1 h-1 rounded-full bg-violet-400" />
+                      {a.observations} {a.observations === 1 ? "memory" : "memories"}
+                    </span>
                   </div>
-                  {/* Count + % */}
-                  <span className="text-xs text-text-muted w-20 text-right shrink-0">
-                    {count} · {Math.round((count / totalRoles) * 100)}%
-                  </span>
-                </div>
-              ))}
-          </div>
-        </section>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Most consulted advisors */}
+          {topAdvisors.length > 0 && (
+            <section>
+              <h2 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-4">
+                Most consulted
+              </h2>
+              <div className="rounded-xl border border-surface-border bg-surface-raised divide-y divide-surface-border overflow-hidden">
+                {topAdvisors.map((a, i) => (
+                  <div key={a.id} className="px-4 py-3 flex items-center gap-3">
+                    <span className="text-xs text-text-muted w-4 shrink-0">{i + 1}</span>
+                    <div
+                      className="w-6 h-6 rounded-md flex items-center justify-center text-xs shrink-0"
+                      style={{ backgroundColor: `${a.colorHex}22` }}
+                    >
+                      {a.icon ?? (
+                        <span className="font-bold" style={{ color: a.colorHex }}>
+                          {a.name[0]}
+                        </span>
+                      )}
+                    </div>
+                    <div className="w-36 shrink-0 min-w-0">
+                      <p className="text-xs font-medium text-text-primary truncate">{a.name}</p>
+                      <p className="text-[10px] text-text-muted truncate">{a.tagline}</p>
+                    </div>
+                    <div className="flex-1 h-1 bg-surface-overlay rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full"
+                        style={{
+                          width: `${Math.round(((a.count ?? 0) / maxCount) * 100)}%`,
+                          backgroundColor: a.colorHex,
+                        }}
+                      />
+                    </div>
+                    <span className="text-[10px] text-text-muted w-16 text-right shrink-0">
+                      {a.count} {a.count === 1 ? "session" : "sessions"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* What your advisors see in you — memory narrative */}
+          {topMemories && topMemories.length > 0 && (
+            <section>
+              <h2 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-4">
+                What your advisors see in you
+              </h2>
+              <div className="space-y-2">
+                {topMemories.map((m, i) => (
+                  <div
+                    key={i}
+                    className="flex items-start gap-3 px-4 py-3 rounded-lg bg-surface-raised border border-surface-border"
+                  >
+                    <div className="flex flex-col items-center gap-1 shrink-0 pt-0.5">
+                      <span className={`text-[9px] font-medium px-1 py-0.5 rounded ${m.memoryType === "reflection" ? "text-violet-300 bg-violet-500/10" : "text-text-muted"}`}>
+                        {m.memoryType === "reflection" ? "insight" : "note"}
+                      </span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs text-text-muted mb-0.5">{m.personaName}</p>
+                      <p className="text-sm text-text-secondary leading-relaxed italic">&ldquo;{m.content}&rdquo;</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Recent questions */}
+          {recentQuestions.length > 0 && (
+            <section>
+              <h2 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-4">
+                Questions you've been sitting with
+              </h2>
+              <div className="space-y-1">
+                {recentQuestions.map((q, i) => (
+                  <div
+                    key={i}
+                    className="flex items-start gap-3 px-4 py-3 rounded-lg hover:bg-surface-raised transition-colors group"
+                  >
+                    <div className="w-1 h-1 rounded-full bg-text-muted mt-2 shrink-0 group-hover:bg-accent transition-colors" />
+                    <p className="flex-1 text-sm text-text-secondary leading-relaxed">{q.user_prompt}</p>
+                    <span className="text-[10px] text-text-muted shrink-0 pt-0.5">
+                      {formatRelativeTime(q.created_at)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+        </>
       )}
     </div>
   );

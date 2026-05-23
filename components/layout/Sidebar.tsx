@@ -8,8 +8,8 @@ import { cn } from "@/lib/utils";
 import {
   Users,
   BookOpen,
-  History,
-  BarChart2,
+  Clock,
+  Sparkles,
   Plus,
   LogOut,
   X,
@@ -24,19 +24,19 @@ interface SidebarProps {
 
 const NAV_ITEMS = [
   {
-    label: "Personas",
+    label: "Sessions",
+    href: "/history",
+    icon: Clock,
+  },
+  {
+    label: "Advisors",
     href: "/personas",
     icon: BookOpen,
   },
   {
-    label: "History",
-    href: "/history",
-    icon: History,
-  },
-  {
-    label: "Analytics",
+    label: "Patterns",
     href: "/analytics",
-    icon: BarChart2,
+    icon: Sparkles,
   },
 ];
 

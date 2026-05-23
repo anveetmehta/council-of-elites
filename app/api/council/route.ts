@@ -10,10 +10,15 @@ import {
   generateCouncilTitle,
   generateConversationSummary,
   generateSessionArtifact,
+  generateAllStances,
+  classifyMove,
   checkInputSafety,
   ConversationEntry,
   PriorRound,
+  type StanceMap,
+  type MoveType,
 } from "@/lib/anthropic/council";
+import { CouncilRole } from "@/types/council.types";
 import {
   fetchPersonaMemories,
   extractMemoryEntries,
@@ -166,6 +171,23 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ── Phase 0 (invisible): Stance priming for all non-moderators ──
+  // Generates each persona's instinctive prior position via parallel Haiku calls.
+  // Cost: ~400-600ms total. Used to anchor their committed position in prompts.
+  const stances: StanceMap = await generateAllStances(nonModerators, question);
+
+  // Build panelist descriptions (with stances) for inter-persona awareness
+  const panelistDescriptions = [...nonModerators, ...moderators].map((m) => {
+    const p = getPersonaById(m.personaId) || getDomainExpertById(m.personaId);
+    return {
+      personaId: m.personaId,
+      name: p?.name ?? m.personaId,
+      tagline: p?.tagline ?? "",
+      role: m.role as CouncilRole,
+      stance: stances[m.personaId],
+    };
+  });
+
   const stream = new ReadableStream({
     async start(controller) {
       const send = (event: SSEEvent) => {
@@ -192,16 +214,14 @@ export async function POST(req: NextRequest) {
 
         send({ type: "phase_change", phase: "initial" });
 
-        for (const member of shuffledNonModerators) {
+        for (let pIdx = 0; pIdx < shuffledNonModerators.length; pIdx++) {
+          const member = shuffledNonModerators[pIdx];
           const persona =
             getPersonaById(member.personaId) ||
             getDomainExpertById(member.personaId);
           if (!persona) continue;
 
-          // Send thinking indicator before response
           send({ type: "persona_thinking", personaId: member.personaId });
-
-          // Brief delay to simulate thinking
           await new Promise((resolve) => setTimeout(resolve, 400));
 
           send({
@@ -210,6 +230,8 @@ export async function POST(req: NextRequest) {
             role: member.role,
           });
 
+          const isLastInPhase1 = pIdx === shuffledNonModerators.length - 1;
+
           const result = await streamPersonaWithHistory(
             member,
             question,
@@ -217,9 +239,12 @@ export async function POST(req: NextRequest) {
             recentRounds,
             conversationSummary,
             (text) => send({ type: "token", personaId: member.personaId, text }),
-            members, // roster for system prompt
-            memoriesMap[member.personaId], // memory injection
-            knowledgeMap[member.personaId] // knowledge injection
+            members,
+            memoriesMap[member.personaId],
+            knowledgeMap[member.personaId],
+            stances[member.personaId],
+            panelistDescriptions,
+            isLastInPhase1
           );
 
           allResponses[member.personaId] = result;
@@ -260,21 +285,36 @@ export async function POST(req: NextRequest) {
 
         // ═══ PHASE 2: Director-Driven Reactions (with Hand-Raise Override) ═══
         if (!isSinglePersona && nonModerators.length >= 2) {
-          const maxReactions = Math.min(nonModerators.length * 2, 4);
+          // Adaptive max reactions based on question depth/length
+          // Simple heuristic: longer questions get more exchanges
+          const questionDepth = question.length > 120 ? 4 : question.length > 60 ? 3 : 2;
+          const maxReactions = Math.min(nonModerators.length * 2, questionDepth);
 
           send({ type: "phase_change", phase: "reaction" });
 
           let userSelectionUsed = false;
           let reactionsCompleted = 0;
           const reactionCountsLocal: Record<string, number> = {};
+          let lastMoveContext: { moveType: MoveType; addressedTo: string | null } | undefined;
 
           for (let i = 0; i < maxReactions; i++) {
             try {
-              // Check who's still eligible (max 2 reactions per persona)
               const eligibleMembers = nonModerators.filter(
                 (m) => (reactionCountsLocal[m.personaId] ?? 0) < 2
               );
               if (eligibleMembers.length === 0) break;
+
+              // Classify the last turn's move type for conditional relevance
+              if (turns.length > 0) {
+                try {
+                  lastMoveContext = await classifyMove(
+                    turns[turns.length - 1],
+                    roster
+                  );
+                } catch {
+                  lastMoveContext = undefined;
+                }
+              }
 
               let reactionMember: CouncilMember | undefined = undefined;
               let decision: DirectorDecision | undefined = undefined;
@@ -291,21 +331,36 @@ export async function POST(req: NextRequest) {
                 }
               }
 
-              // If no user selection, use director
+              // Conditional relevance: if the last turn directly named someone, prioritize them
+              if (!reactionMember && lastMoveContext?.addressedTo) {
+                const addressed = lastMoveContext.addressedTo.toLowerCase();
+                const addressedMember = eligibleMembers.find((m) => {
+                  const name = (getPersonaById(m.personaId) || getDomainExpertById(m.personaId))?.name ?? "";
+                  return name.toLowerCase().includes(addressed) || addressed.includes(name.toLowerCase());
+                });
+                if (addressedMember && (lastMoveContext.moveType === "CHALLENGE" || lastMoveContext.moveType === "QUESTION")) {
+                  reactionMember = addressedMember;
+                  instruction = lastMoveContext.moveType === "QUESTION"
+                    ? `${lastMoveContext.addressedTo} was just directly asked a question. Answer it head-on, naming the question.`
+                    : `${lastMoveContext.addressedTo} was just directly challenged. Defend, concede, or counter — but engage the specific claim made against you.`;
+                  speakerSource = 'director';
+                }
+              }
+
+              // Otherwise use director
               if (!reactionMember) {
                 decision = await callDirector(
                   question,
                   roster,
                   turns,
-                  maxReactions - i
+                  maxReactions - i,
+                  lastMoveContext
                 );
 
                 const directorStopping = !decision || !decision.shouldContinue || !decision.nextSpeaker;
 
                 if (directorStopping) {
-                  // Always force at least 1 reaction — the conversation needs it
                   if (reactionsCompleted === 0) {
-                    // Pick the persona most likely to disagree: contrarian first, then random
                     reactionMember =
                       eligibleMembers.find((m) => m.personaId === "sharp-contrarian") ??
                       eligibleMembers[Math.floor(Math.random() * eligibleMembers.length)];
@@ -364,8 +419,10 @@ export async function POST(req: NextRequest) {
                     personaId: reactionMember.personaId,
                     text,
                   }),
-                memoriesMap[reactionMember.personaId], // memory injection
-                knowledgeMap[reactionMember.personaId] // knowledge injection
+                memoriesMap[reactionMember.personaId],
+                knowledgeMap[reactionMember.personaId],
+                stances[reactionMember.personaId],
+                panelistDescriptions
               );
 
               // Update allResponses with latest (overwrites initial take)
@@ -432,8 +489,10 @@ export async function POST(req: NextRequest) {
             allResponses,
             (text) => send({ type: "moderator_token", text }),
             turns,
-            memoriesMap[moderators[0].personaId], // memory injection
-            knowledgeMap[moderators[0].personaId] // knowledge injection
+            memoriesMap[moderators[0].personaId],
+            knowledgeMap[moderators[0].personaId],
+            stances[moderators[0].personaId],
+            panelistDescriptions
           );
 
           allResponses[moderators[0].personaId] = {

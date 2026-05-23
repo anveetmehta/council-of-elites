@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Lightbulb, ArrowDown, Copy, Check } from "lucide-react";
+import { Copy, Check, ArrowDown } from "lucide-react";
 import { SessionArtifact as SessionArtifactType } from "@/types/council.types";
 
 interface SessionArtifactProps {
@@ -20,12 +20,12 @@ export function SessionArtifact({ artifact }: SessionArtifactProps) {
   }
 
   return (
-    <div className="mt-6 rounded-xl border border-accent/20 bg-gradient-to-b from-accent-muted/10 to-transparent overflow-hidden">
+    <div className="mt-4 rounded-xl border border-accent/30 bg-gradient-to-b from-accent/8 to-transparent overflow-hidden">
       {/* Header */}
-      <div className="px-4 py-3 border-b border-accent/15 flex items-center justify-between">
+      <div className="px-5 py-3 border-b border-accent/15 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Lightbulb size={13} className="text-accent shrink-0" />
-          <span className="text-[11px] uppercase tracking-wider font-semibold text-accent">
+          <span className="text-accent text-xs">✦</span>
+          <span className="text-[11px] uppercase tracking-widest font-semibold text-accent">
             Session Clarity
           </span>
         </div>
@@ -49,10 +49,10 @@ export function SessionArtifact({ artifact }: SessionArtifactProps) {
       </div>
 
       {/* Content */}
-      <div className="p-4 space-y-4">
+      <div className="p-5 space-y-4">
         {/* Came in with */}
-        <div className="space-y-1.5">
-          <p className="text-[10px] uppercase tracking-wider font-medium text-text-muted">
+        <div className="space-y-1">
+          <p className="text-[10px] uppercase tracking-wider font-semibold text-text-muted">
             You came in with
           </p>
           <p className="text-sm text-text-secondary leading-relaxed">
@@ -62,12 +62,12 @@ export function SessionArtifact({ artifact }: SessionArtifactProps) {
 
         {/* Arrow */}
         <div className="flex items-center justify-center">
-          <ArrowDown size={14} className="text-accent/30" />
+          <ArrowDown size={13} className="text-accent/40" />
         </div>
 
         {/* Walking out with */}
-        <div className="space-y-1.5">
-          <p className="text-[10px] uppercase tracking-wider font-medium text-text-muted">
+        <div className="space-y-1">
+          <p className="text-[10px] uppercase tracking-wider font-semibold text-text-muted">
             Walking out with
           </p>
           <p className="text-sm text-text-primary leading-relaxed font-medium">
@@ -77,12 +77,12 @@ export function SessionArtifact({ artifact }: SessionArtifactProps) {
 
         {/* Key decision */}
         {artifact.keyDecision && (
-          <div className="pt-3 border-t border-accent/10">
-            <p className="text-[10px] uppercase tracking-wider font-medium text-text-muted mb-1.5">
+          <div className="pt-4 border-t border-accent/15">
+            <p className="text-[10px] uppercase tracking-wider font-semibold text-text-muted mb-2">
               The question only you can answer
             </p>
             <p className="text-sm text-accent leading-relaxed italic">
-              {artifact.keyDecision}
+              "{artifact.keyDecision}"
             </p>
           </div>
         )}

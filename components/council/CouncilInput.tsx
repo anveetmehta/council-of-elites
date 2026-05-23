@@ -1,11 +1,13 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Send, Square } from "lucide-react";
+import { Send, Square, AtSign } from "lucide-react";
 import { CouncilMember } from "@/types/council.types";
 import { getPersonaById } from "@/data/personas";
 import { getDomainExpertById } from "@/data/domain-experts";
 import { getPersonaHandle } from "@/lib/utils";
+
+const MENTION_HINT_KEY = "council_mention_hint_seen";
 
 interface CouncilInputProps {
   onSubmit: (question: string) => void;
@@ -28,14 +30,23 @@ export function CouncilInput({
 }: CouncilInputProps) {
   const [value, setValue] = useState("");
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [showMentionHint, setShowMentionHint] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Check if user has seen the @mention hint before
+  useEffect(() => {
+    const seen = typeof window !== "undefined" && localStorage.getItem(MENTION_HINT_KEY);
+    if (!seen && members && members.length > 1) {
+      // Will show on first focus
+    }
+  }, [members]);
 
   // Consume initialValue (e.g. from follow-up chip click)
   useEffect(() => {
     if (initialValue) {
       setValue(initialValue);
       onInitialValueConsumed?.();
-      // Focus and place cursor at end
       setTimeout(() => {
         const el = textareaRef.current;
         if (el) {
@@ -65,9 +76,29 @@ export function CouncilInput({
         })
       : [];
 
+  function handleFocus() {
+    if (typeof window === "undefined") return;
+    const seen = localStorage.getItem(MENTION_HINT_KEY);
+    if (!seen && members && members.length > 1) {
+      hintTimerRef.current = setTimeout(() => {
+        setShowMentionHint(true);
+        localStorage.setItem(MENTION_HINT_KEY, "1");
+        // Auto-dismiss after 4s
+        setTimeout(() => setShowMentionHint(false), 4000);
+      }, 600);
+    }
+  }
+
+  function handleBlur() {
+    if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
+    setTimeout(() => setShowMentionHint(false), 200);
+  }
+
   function handleChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
     const newValue = e.target.value;
     setValue(newValue);
+    // Dismiss hint when user starts typing
+    if (newValue.length > 0) setShowMentionHint(false);
 
     // Only detect @mention at the very start of the message
     const atMatch = newValue.match(/^@(\w*)$/);
@@ -92,7 +123,6 @@ export function CouncilInput({
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
-    // Close mention dropdown on Escape
     if (e.key === "Escape" && mentionQuery !== null) {
       setMentionQuery(null);
       return;
@@ -109,6 +139,21 @@ export function CouncilInput({
     <div className="border-t border-surface-border bg-surface px-4 py-4">
       <div className="max-w-4xl mx-auto">
         <div className="relative">
+          {/* @mention hint tooltip (first-time) */}
+          {showMentionHint && (
+            <div className="absolute bottom-full mb-2 left-0 bg-surface-raised border border-accent/20 rounded-lg px-3 py-2 shadow-lg z-10 animate-fade-up">
+              <div className="flex items-center gap-2">
+                <AtSign size={12} className="text-accent shrink-0" />
+                <p className="text-xs text-text-secondary">
+                  Type{" "}
+                  <span className="font-mono text-accent">@Name</span>{" "}
+                  to speak directly with one advisor
+                </p>
+              </div>
+              <div className="absolute bottom-[-5px] left-4 w-2.5 h-2.5 bg-surface-raised border-r border-b border-accent/20 rotate-45" />
+            </div>
+          )}
+
           {/* @mention dropdown */}
           {showMentionDropdown && (
             <div className="absolute bottom-full mb-1 left-0 bg-surface-raised border border-surface-border rounded-xl overflow-hidden shadow-lg z-10 min-w-[200px]">
@@ -121,7 +166,6 @@ export function CouncilInput({
                   <button
                     key={m.personaId}
                     onMouseDown={(e) => {
-                      // Prevent textarea blur before we can update value
                       e.preventDefault();
                       selectMention(m);
                     }}
@@ -149,7 +193,9 @@ export function CouncilInput({
               value={value}
               onChange={handleChange}
               onKeyDown={handleKeyDown}
-              placeholder={placeholder || "Ask your council... or type @Name to address one member"}
+              onFocus={handleFocus}
+              onBlur={handleBlur}
+              placeholder={placeholder || "Ask your council..."}
               disabled={disabled}
               rows={1}
               className="flex-1 resize-none bg-transparent text-sm text-text-primary placeholder:text-text-muted focus:outline-none leading-relaxed min-h-[24px] max-h-40 disabled:opacity-50"
@@ -174,7 +220,7 @@ export function CouncilInput({
           </div>
         </div>
         <p className="mt-1.5 text-[10px] text-text-muted text-center">
-          Press Enter to submit · Shift+Enter for new line · @Name to address one member
+          Enter to submit · Shift+Enter for new line
         </p>
       </div>
     </div>

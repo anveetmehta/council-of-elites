@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
-import { useParams } from "next/navigation";
+import { useEffect, useState, useRef, Suspense } from "react";
+import { useParams, useSearchParams } from "next/navigation";
 import { CouncilRoom, CouncilMessage, CouncilMember } from "@/types/council.types";
 import { PersonaDefinition } from "@/types/persona.types";
 import { getPersonaById } from "@/data/personas";
@@ -18,19 +18,22 @@ import { DisclaimerBanner } from "@/components/legal/DisclaimerBanner";
 import { PersonaAvatar } from "@/components/personas/PersonaAvatar";
 import { SessionArtifact } from "@/components/council/SessionArtifact";
 import { extractMentionHandle, getPersonaHandle } from "@/lib/utils";
-import { Loader2 } from "lucide-react";
+import { Loader2, Share2, Check } from "lucide-react";
 
 function getPersona(id: string): PersonaDefinition | undefined {
   return getPersonaById(id) || getDomainExpertById(id);
 }
 
-export default function CouncilChatPage() {
+function CouncilChatInner() {
   const { roomId } = useParams<{ roomId: string }>();
+  const searchParams = useSearchParams();
   const [room, setRoom] = useState<CouncilRoom | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [prefillInput, setPrefillInput] = useState<string | null>(null);
   const [userSelectedSpeakerId, setUserSelectedSpeakerId] = useState<string | null>(null);
+  const [shareCopied, setShareCopied] = useState(false);
+  const initialQuestionFired = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const { messages, isLoading, error: councilError, setMessages, askCouncil, stopCouncil } = useCouncil([]);
@@ -57,6 +60,29 @@ export default function CouncilChatPage() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isLoading]);
+
+  // Auto-fire the first question from URL ?q= param (delivered from builder)
+  useEffect(() => {
+    if (loading || !room || initialQuestionFired.current) return;
+    const initialQuestion = searchParams.get("q");
+    if (initialQuestion && messages.length === 0 && !isLoading) {
+      initialQuestionFired.current = true;
+      // Strip ?q= from URL after firing
+      const url = new URL(window.location.href);
+      url.searchParams.delete("q");
+      window.history.replaceState({}, "", url.toString());
+      handleQuestion(initialQuestion);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, room, messages.length, isLoading]);
+
+  function handleShare() {
+    const shareUrl = `${window.location.origin}/share/${roomId}`;
+    navigator.clipboard.writeText(shareUrl).then(() => {
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 2000);
+    });
+  }
 
   async function handleQuestion(question: string) {
     if (!room) return;
@@ -132,6 +158,23 @@ export default function CouncilChatPage() {
             {personas.map((p) => p.name).join(" · ")}
           </p>
         </div>
+        <button
+          onClick={handleShare}
+          title="Copy share link"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-surface-border hover:border-surface-overlay bg-surface-raised hover:bg-surface-overlay text-xs text-text-muted hover:text-text-secondary transition-colors shrink-0"
+        >
+          {shareCopied ? (
+            <>
+              <Check size={12} className="text-green-400" />
+              <span className="text-green-400">Copied</span>
+            </>
+          ) : (
+            <>
+              <Share2 size={12} />
+              <span>Share</span>
+            </>
+          )}
+        </button>
       </div>
 
       {/* Disclaimer banner */}
@@ -197,6 +240,14 @@ export default function CouncilChatPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function CouncilChatPage() {
+  return (
+    <Suspense fallback={null}>
+      <CouncilChatInner />
+    </Suspense>
   );
 }
 
@@ -406,7 +457,6 @@ function CouncilMessageBlock({
           members={nonModeratorMembers}
           onPersonaSelected={onPersonaSelected}
           disabled={userSelectedSpeakerId !== null && userSelectedSpeakerId !== undefined}
-          countdown={2}
         />
       )}
 

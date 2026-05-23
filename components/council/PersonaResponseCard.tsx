@@ -103,18 +103,18 @@ export function PersonaResponseCard({
               <TierBadge type={persona.personaType} />
               {hasMemory && (
                 <span
-                  title="Remembers you"
-                  className="inline-flex h-1.5 w-1.5 rounded-full bg-violet-500/70"
-                />
+                  title="Has context from past conversations"
+                  className="inline-flex items-center gap-1 text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-violet-500/15 border border-violet-500/30 text-violet-300"
+                >
+                  <span className="w-1 h-1 rounded-full bg-violet-400" />
+                  Knows you
+                </span>
               )}
             </div>
             <div className="flex items-center gap-1.5">
               <p className="text-[10px] text-text-muted">{persona.tagline}</p>
               {speakerSource === 'user' && (
                 <span className="text-[10px] text-accent font-medium">at your request</span>
-              )}
-              {speakerSource === 'director' && (
-                <span className="text-[10px] text-text-muted italic">naturally</span>
               )}
             </div>
           </div>

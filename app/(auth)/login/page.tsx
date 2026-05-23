@@ -1,21 +1,30 @@
 "use client";
 
-import { useState } from "react";
+import { useState, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Users } from "lucide-react";
 
-export default function LoginPage() {
+function LoginContent() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const searchParams = useSearchParams();
+  const topic = searchParams.get("topic");
 
   async function handleGoogleLogin() {
     setLoading(true);
     setError(null);
     const supabase = createClient();
+
+    // After auth, send them to /council/new with the topic preserved
+    const next = topic
+      ? `/council/new?topic=${encodeURIComponent(topic)}`
+      : "/";
+
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
+        redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`,
       },
     });
     if (error) {
@@ -32,19 +41,35 @@ export default function LoginPage() {
           <div className="w-9 h-9 rounded-lg bg-accent-muted border border-accent/30 flex items-center justify-center">
             <Users size={18} className="text-accent" />
           </div>
-          <span className="text-text-primary font-semibold text-lg tracking-tight">
+          <span className="text-text-primary font-serif italic text-lg tracking-tight">
             Council of Elites
           </span>
         </div>
 
-        {/* Heading */}
+        {/* Heading — context-aware */}
         <div className="mb-10">
-          <h1 className="text-2xl font-semibold text-text-primary mb-2">
-            Sign in to your council
-          </h1>
-          <p className="text-text-secondary text-sm leading-relaxed">
-            Assemble advisors, get contrasting perspectives, make better decisions.
-          </p>
+          {topic ? (
+            <>
+              <h1 className="text-2xl font-serif italic text-text-primary mb-3 leading-tight">
+                One step from your council
+              </h1>
+              <p className="text-text-secondary text-sm leading-relaxed mb-3">
+                Sign in and your panel will weigh in on:
+              </p>
+              <p className="text-sm text-text-primary italic border-l-2 border-accent/40 pl-3">
+                "{topic}"
+              </p>
+            </>
+          ) : (
+            <>
+              <h1 className="text-2xl font-serif italic text-text-primary mb-2 leading-tight">
+                Sign in
+              </h1>
+              <p className="text-text-secondary text-sm leading-relaxed">
+                Assemble a panel, get contrasting perspectives, think better.
+              </p>
+            </>
+          )}
         </div>
 
         {/* Google button */}
@@ -75,6 +100,14 @@ export default function LoginPage() {
         </p>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginContent />
+    </Suspense>
   );
 }
 

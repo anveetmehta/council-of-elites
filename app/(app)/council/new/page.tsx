@@ -12,8 +12,10 @@ import { PersonaAvatar } from "@/components/personas/PersonaAvatar";
 import { createClient } from "@/lib/supabase/client";
 import { trackEvent, Events } from "@/lib/analytics";
 import { cn, getRoleBadgeConfig } from "@/lib/utils";
+import { ArrowLeft, Settings2, Loader2 } from "lucide-react";
 
 type Recommendation = { id: string; role: CouncilRole; reason: string };
+type BuilderTier = "quick" | "customize" | "advanced";
 
 const MAX_MEMBERS = 4;
 const MIN_MEMBERS = 2;
@@ -25,10 +27,12 @@ export default function CouncilBuilderPage() {
   const [members, setMembers] = useState<CouncilMember[]>([]);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [tier, setTier] = useState<BuilderTier>("quick");
 
-  // Smart recommendation state
+  // Recommendation state
   const [topicInput, setTopicInput] = useState("");
   const [recommendations, setRecommendations] = useState<Recommendation[] | null>(null);
+  const [previewLine, setPreviewLine] = useState<string | null>(null);
   const [recommending, setRecommending] = useState(false);
   const autoTriggered = useRef(false);
 
@@ -36,7 +40,7 @@ export default function CouncilBuilderPage() {
   const domainExperts = getAllDomainExperts();
   const allPersonas = [...archetypes, ...domainExperts];
 
-  // Pre-populate from recommended council or URL param
+  // Pre-populate from URL params
   useEffect(() => {
     const membersParam = searchParams.get("members");
     const personaParam = searchParams.get("persona");
@@ -46,9 +50,11 @@ export default function CouncilBuilderPage() {
         setMembers(parsed);
         const hasRoles = parsed.some((m) => m.role !== "default");
         if (hasRoles) setMode("structured_debate");
+        setTier("quick");
       } catch {}
     } else if (personaParam) {
       setMembers([{ personaId: personaParam, role: "default" }]);
+      setTier("customize");
     }
   }, [searchParams]);
 
@@ -68,6 +74,7 @@ export default function CouncilBuilderPage() {
   async function fetchRecommendations(topic: string) {
     if (!topic.trim()) return;
     setRecommending(true);
+    setPreviewLine(null);
     try {
       const res = await fetch("/api/recommend-council", {
         method: "POST",
@@ -77,25 +84,20 @@ export default function CouncilBuilderPage() {
       if (!res.ok) throw new Error();
       const data = await res.json();
       setRecommendations(data.recommendations);
+      setPreviewLine(data.preview ?? null);
+      const newMembers: CouncilMember[] = data.recommendations.map((r: Recommendation) => ({
+        personaId: r.id,
+        role: r.role,
+      }));
+      setMembers(newMembers);
+      const hasRoles = newMembers.some((m) => m.role !== "default");
+      if (hasRoles) setMode("structured_debate");
       trackEvent("smart_recommend_used", { topic: topic.trim() });
     } catch {
       setRecommendations(null);
     } finally {
       setRecommending(false);
     }
-  }
-
-  function applyRecommendations() {
-    if (!recommendations) return;
-    const newMembers: CouncilMember[] = recommendations.map((r) => ({
-      personaId: r.id,
-      role: r.role,
-    }));
-    setMembers(newMembers);
-    const hasRoles = newMembers.some((m) => m.role !== "default");
-    if (hasRoles) setMode("structured_debate");
-    setRecommendations(null);
-    trackEvent("smart_recommend_applied", { topic: topicInput, count: newMembers.length });
   }
 
   function isSelected(personaId: string) {
@@ -187,7 +189,11 @@ export default function CouncilBuilderPage() {
         });
       }
 
-      router.push(`/council/${data.id}`);
+      const initialTopic = searchParams.get("topic");
+      const url = initialTopic
+        ? `/council/${data.id}?q=${encodeURIComponent(initialTopic)}`
+        : `/council/${data.id}`;
+      router.push(url);
     } catch (err) {
       setError("Failed to create council. Please try again.");
       setCreating(false);
@@ -195,69 +201,56 @@ export default function CouncilBuilderPage() {
   }
 
   const canStart = members.length >= MIN_MEMBERS && members.length <= MAX_MEMBERS;
+  const hasTopic = !!searchParams.get("topic");
+  const topic = searchParams.get("topic");
 
-  return (
-    <div className="max-w-5xl mx-auto px-6 py-10">
-      <div className="mb-8">
-        <h1 className="text-2xl font-serif italic text-text-primary mb-2">
-          Build your council
-        </h1>
-        <p className="text-text-secondary text-sm">
-          Select 2–4 advisors. Optionally assign roles to structure the discussion.
-        </p>
-      </div>
+  // ── Tier 1: Quick Start ──
+  if (tier === "quick" && (recommending || recommendations || members.length > 0 || !hasTopic === false)) {
+    return (
+      <div className="max-w-2xl mx-auto px-6 py-12">
+        <button
+          onClick={() => router.back()}
+          className="inline-flex items-center gap-1.5 text-xs text-text-muted hover:text-text-primary transition-colors mb-6"
+        >
+          <ArrowLeft size={12} />
+          Back
+        </button>
 
-      {/* Smart Recommendation Section */}
-      {members.length === 0 && !searchParams.get("recommended") && !recommendations && (
-        <div className="mb-8 p-5 rounded-xl border border-surface-border bg-surface-raised">
-          <p className="text-sm font-medium text-text-primary mb-3">
-            What do you need help with?
-          </p>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={topicInput}
-              onChange={(e) => setTopicInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && fetchRecommendations(topicInput)}
-              placeholder="e.g. Should I raise funding or bootstrap my startup?"
-              className="flex-1 px-3 py-2 rounded-lg text-sm bg-surface border border-surface-border text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/50"
-            />
-            <button
-              onClick={() => fetchRecommendations(topicInput)}
-              disabled={!topicInput.trim() || recommending}
-              className="px-4 py-2 rounded-lg bg-accent hover:bg-accent-hover disabled:opacity-40 transition-colors text-sm font-medium text-white whitespace-nowrap"
-            >
-              {recommending ? "Thinking..." : "Suggest advisors"}
-            </button>
+        {topic && (
+          <div className="mb-8">
+            <p className="text-[10px] uppercase tracking-widest text-text-muted mb-2">
+              You asked
+            </p>
+            <p className="text-base text-text-primary italic border-l-2 border-accent/40 pl-3 leading-relaxed">
+              "{topic}"
+            </p>
           </div>
-          <p className="text-[11px] text-text-muted mt-2">
-            Or skip this and pick advisors manually below
-          </p>
+        )}
+
+        <div className="mb-6">
+          <h1 className="text-2xl font-serif italic text-text-primary mb-2 leading-tight">
+            {recommending ? "Picking your council..." : "Your suggested council"}
+          </h1>
+          {!recommending && previewLine && (
+            <p className="text-sm text-text-secondary leading-relaxed">
+              {previewLine}
+            </p>
+          )}
         </div>
-      )}
 
-      {/* Recommending Skeleton */}
-      {recommending && !recommendations && (
-        <div className="mb-8 p-5 rounded-xl border border-surface-border bg-surface-raised">
-          <div className="flex items-center gap-2 mb-3">
-            <div className="w-3 h-3 rounded-full bg-accent animate-pulse" />
-            <p className="text-sm text-text-secondary">Finding the best advisors for your topic...</p>
-          </div>
-          <div className="space-y-2">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="h-14 rounded-lg bg-surface-overlay animate-pulse" />
+        {recommending && (
+          <div className="space-y-3 mb-6">
+            {[1, 2, 3, 4].map((i) => (
+              <div
+                key={i}
+                className="h-20 rounded-xl bg-surface-raised border border-surface-border animate-pulse"
+              />
             ))}
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Recommendation Results */}
-      {recommendations && recommendations.length > 0 && (
-        <div className="mb-8 p-5 rounded-xl border border-accent/30 bg-surface-raised">
-          <p className="text-sm font-medium text-text-primary mb-3">
-            Suggested council for your topic
-          </p>
-          <div className="space-y-2 mb-4">
+        {!recommending && recommendations && recommendations.length > 0 && (
+          <div className="space-y-2.5 mb-8">
             {recommendations.map((rec) => {
               const persona = allPersonas.find((p) => p.id === rec.id);
               if (!persona) return null;
@@ -265,12 +258,13 @@ export default function CouncilBuilderPage() {
               return (
                 <div
                   key={rec.id}
-                  className="flex items-start gap-3 p-3 rounded-lg bg-surface border border-surface-border"
+                  className="flex items-start gap-3 p-4 rounded-xl border bg-surface-raised border-surface-border"
+                  style={{ borderLeftWidth: "3px", borderLeftColor: persona.colorHex }}
                 >
                   <PersonaAvatar persona={persona} size="sm" />
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-0.5">
-                      <span className="text-xs font-medium text-text-primary">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                      <span className="text-sm font-serif italic font-semibold text-text-primary">
                         {persona.name}
                       </span>
                       {rec.role !== "default" && (
@@ -284,7 +278,7 @@ export default function CouncilBuilderPage() {
                         </span>
                       )}
                     </div>
-                    <p className="text-[11px] text-text-secondary leading-relaxed">
+                    <p className="text-xs text-text-secondary leading-relaxed">
                       {rec.reason}
                     </p>
                   </div>
@@ -292,28 +286,222 @@ export default function CouncilBuilderPage() {
               );
             })}
           </div>
-          <div className="flex gap-2">
+        )}
+
+        {!recommending && !recommendations && members.length > 0 && (
+          <div className="space-y-2.5 mb-8">
+            {members.map((m) => {
+              const persona = allPersonas.find((p) => p.id === m.personaId);
+              if (!persona) return null;
+              const { label, className: roleClass } = getRoleBadgeConfig(m.role);
+              return (
+                <div
+                  key={m.personaId}
+                  className="flex items-start gap-3 p-4 rounded-xl border bg-surface-raised border-surface-border"
+                  style={{ borderLeftWidth: "3px", borderLeftColor: persona.colorHex }}
+                >
+                  <PersonaAvatar persona={persona} size="sm" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                      <span className="text-sm font-serif italic font-semibold text-text-primary">
+                        {persona.name}
+                      </span>
+                      {m.role !== "default" && (
+                        <span
+                          className={cn(
+                            "text-[10px] font-semibold px-1.5 py-0.5 rounded border",
+                            roleClass
+                          )}
+                        >
+                          {label}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-text-secondary leading-relaxed">
+                      {persona.tagline}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {!recommending && members.length > 0 && (
+          <div className="space-y-3">
             <button
-              onClick={applyRecommendations}
-              className="px-4 py-2 rounded-lg bg-accent hover:bg-accent-hover transition-colors text-sm font-medium text-white"
+              onClick={handleStartCouncil}
+              disabled={!canStart || creating}
+              className="w-full py-3 px-5 rounded-xl bg-accent hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-sm font-medium text-white inline-flex items-center justify-center gap-2"
             >
-              Use this council
+              {creating ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" />
+                  Setting up...
+                </>
+              ) : (
+                <>Start this conversation</>
+              )}
+            </button>
+            <div className="flex items-center justify-center gap-4">
+              <button
+                onClick={() => setTier("customize")}
+                className="text-xs text-text-secondary hover:text-text-primary transition-colors"
+              >
+                Swap someone out
+              </button>
+              <span className="text-text-muted">·</span>
+              <button
+                onClick={() => setTier("advanced")}
+                className="text-xs text-text-secondary hover:text-text-primary transition-colors inline-flex items-center gap-1"
+              >
+                <Settings2 size={11} />
+                Advanced setup
+              </button>
+            </div>
+          </div>
+        )}
+
+        {!hasTopic && !recommending && members.length === 0 && (
+          <NoTopicEntry
+            topicInput={topicInput}
+            setTopicInput={setTopicInput}
+            onSubmit={() => fetchRecommendations(topicInput)}
+            onAdvanced={() => setTier("advanced")}
+          />
+        )}
+
+        {error && (
+          <p className="mt-4 text-xs text-red-400 text-center">{error}</p>
+        )}
+      </div>
+    );
+  }
+
+  // ── Tier 2: Customize ──
+  if (tier === "customize") {
+    return (
+      <div className="max-w-3xl mx-auto px-6 py-10 pb-32">
+        <button
+          onClick={() => setTier("quick")}
+          className="inline-flex items-center gap-1.5 text-xs text-text-muted hover:text-text-primary transition-colors mb-6"
+        >
+          <ArrowLeft size={12} />
+          Back to suggestion
+        </button>
+
+        <div className="mb-8">
+          <h1 className="text-2xl font-serif italic text-text-primary mb-2">
+            Customize your council
+          </h1>
+          <p className="text-sm text-text-secondary">
+            Tap to add or remove. Up to {MAX_MEMBERS} advisors.
+          </p>
+        </div>
+
+        {members.length > 0 && (
+          <div className="mb-8">
+            <h2 className="text-xs font-semibold text-text-muted uppercase tracking-widest mb-3">
+              Selected ({members.length}/{MAX_MEMBERS})
+            </h2>
+            <div className="space-y-2">
+              {members.map((member) => {
+                const persona = allPersonas.find((p) => p.id === member.personaId);
+                if (!persona) return null;
+                return (
+                  <MemberCard
+                    key={member.personaId}
+                    persona={persona}
+                    member={member}
+                    onRoleChange={(role) => updateMemberRole(member.personaId, role)}
+                    onAttributeChange={(attrs) => updateMemberAttributes(member.personaId, attrs)}
+                    onRemove={() => removeMember(member.personaId)}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <div className="mb-8">
+          <h2 className="text-xs font-semibold text-text-muted uppercase tracking-widest mb-3">
+            Available advisors
+          </h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {allPersonas.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => togglePersona(p)}
+                disabled={!isSelected(p.id) && members.length >= MAX_MEMBERS}
+                className={cn(
+                  "flex items-center gap-3 p-3 rounded-lg border transition-all text-left disabled:opacity-30 disabled:cursor-not-allowed",
+                  isSelected(p.id)
+                    ? "bg-accent-muted/20 border-accent/40"
+                    : "bg-surface-raised border-surface-border hover:border-surface-overlay"
+                )}
+              >
+                <PersonaAvatar persona={p} size="sm" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-serif italic font-semibold text-text-primary truncate">
+                    {p.name}
+                  </p>
+                  <p className="text-[10px] text-text-muted truncate">
+                    {p.tagline}
+                  </p>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="fixed bottom-0 left-0 right-0 lg:left-64 bg-surface border-t border-surface-border px-6 py-3">
+          <div className="max-w-3xl mx-auto space-y-2">
+            <button
+              onClick={handleStartCouncil}
+              disabled={!canStart || creating}
+              className="w-full py-3 px-5 rounded-xl bg-accent hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-sm font-medium text-white"
+            >
+              {creating ? "Setting up..." : `Start with ${members.length} advisor${members.length !== 1 ? "s" : ""}`}
             </button>
             <button
-              onClick={() => setRecommendations(null)}
-              className="px-4 py-2 rounded-lg border border-surface-border text-sm text-text-secondary hover:text-text-primary transition-colors"
+              onClick={() => setTier("advanced")}
+              className="block mx-auto text-xs text-text-secondary hover:text-text-primary transition-colors"
             >
-              Pick manually instead
+              Advanced: roles & customization →
             </button>
           </div>
         </div>
-      )}
+
+        {error && (
+          <p className="mt-3 text-xs text-red-400 text-center">{error}</p>
+        )}
+      </div>
+    );
+  }
+
+  // ── Tier 3: Advanced (full builder) ──
+  return (
+    <div className="max-w-5xl mx-auto px-6 py-10">
+      <button
+        onClick={() => setTier(members.length > 0 ? "customize" : "quick")}
+        className="inline-flex items-center gap-1.5 text-xs text-text-muted hover:text-text-primary transition-colors mb-4"
+      >
+        <ArrowLeft size={12} />
+        Back
+      </button>
+
+      <div className="mb-8">
+        <h1 className="text-2xl font-serif italic text-text-primary mb-2">
+          Advanced council setup
+        </h1>
+        <p className="text-text-secondary text-sm">
+          Pick 2–4 advisors. Assign roles. Add focus areas if you want.
+        </p>
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Left: Persona selection */}
         <div className="lg:col-span-2 space-y-8">
-          {/* Mode toggle */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <span className="text-xs text-text-secondary">Discussion mode:</span>
             <div className="flex rounded-lg border border-surface-border overflow-hidden">
               <button
@@ -345,7 +533,6 @@ export default function CouncilBuilderPage() {
             )}
           </div>
 
-          {/* Archetypes */}
           <section>
             <h2 className="text-xs font-semibold text-text-muted uppercase tracking-widest mb-3">
               Archetypes
@@ -363,7 +550,6 @@ export default function CouncilBuilderPage() {
             </div>
           </section>
 
-          {/* Domain Experts */}
           <section>
             <h2 className="text-xs font-semibold text-text-muted uppercase tracking-widest mb-3">
               Domain Expert Perspectives
@@ -382,7 +568,6 @@ export default function CouncilBuilderPage() {
           </section>
         </div>
 
-        {/* Right: Selected members */}
         <div className="lg:col-span-1">
           <div className="sticky top-6">
             <div className="flex items-center justify-between mb-4">
@@ -397,7 +582,7 @@ export default function CouncilBuilderPage() {
             {members.length === 0 ? (
               <div className="rounded-xl border border-dashed border-surface-border p-8 text-center">
                 <p className="text-xs text-text-muted">
-                  Select at least 2 advisors to start
+                  Select at least 2 advisors
                 </p>
               </div>
             ) : (
@@ -439,6 +624,53 @@ export default function CouncilBuilderPage() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function NoTopicEntry({
+  topicInput,
+  setTopicInput,
+  onSubmit,
+  onAdvanced,
+}: {
+  topicInput: string;
+  setTopicInput: (v: string) => void;
+  onSubmit: () => void;
+  onAdvanced: () => void;
+}) {
+  return (
+    <div className="rounded-xl border border-surface-border bg-surface-raised p-6">
+      <h2 className="text-base font-serif italic text-text-primary mb-2">
+        What are you wrestling with?
+      </h2>
+      <p className="text-sm text-text-secondary mb-4">
+        Tell us what's on your mind and we'll suggest the right panel.
+      </p>
+      <div className="flex flex-col sm:flex-row gap-2 mb-3">
+        <input
+          type="text"
+          value={topicInput}
+          onChange={(e) => setTopicInput(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && onSubmit()}
+          placeholder="e.g. Should I raise funding or bootstrap?"
+          autoFocus
+          className="flex-1 px-3 py-2.5 rounded-lg text-sm bg-surface border border-surface-border text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/50"
+        />
+        <button
+          onClick={onSubmit}
+          disabled={!topicInput.trim()}
+          className="px-4 py-2.5 rounded-lg bg-accent hover:bg-accent-hover disabled:opacity-40 transition-colors text-sm font-medium text-white whitespace-nowrap"
+        >
+          Suggest a panel
+        </button>
+      </div>
+      <button
+        onClick={onAdvanced}
+        className="text-xs text-text-secondary hover:text-text-primary transition-colors"
+      >
+        Or pick advisors manually →
+      </button>
     </div>
   );
 }
