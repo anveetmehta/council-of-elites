@@ -493,7 +493,7 @@ export async function streamPersonaWithHistory(
     }
   }
 
-  return { response: fullText, role: member.role };
+  return { response: stripMarkdownEmphasis(fullText), role: member.role };
 }
 
 export async function streamModerator(
@@ -733,7 +733,8 @@ export async function streamReactionTurn(
   memories?: MemoryEntry[],
   knowledge?: string[],
   committedStance?: string,
-  panelistDescriptions?: Array<{ personaId: string; name: string; tagline: string; role: CouncilRole; stance?: string }>
+  panelistDescriptions?: Array<{ personaId: string; name: string; tagline: string; role: CouncilRole; stance?: string }>,
+  isHandoffTurn?: boolean
 ): Promise<PersonaResponse> {
   const client = getAnthropicClient();
   const systemPrompt = buildSystemPrompt(
@@ -812,7 +813,11 @@ export async function streamReactionTurn(
     userContent = `Question: "${question}"`;
   }
 
-  userContent += `\n\nWhat's been said:\n\n${transcript}\n\n---\nDirector's note: ${directorInstruction}\n\nReact. Name the specific claim and person you're pushing on. 3 sentences.`;
+  if (isHandoffTurn) {
+    userContent += `\n\nWhat's been said:\n\n${transcript}\n\n---\nHANDOFF MOMENT — read this carefully:\n${directorInstruction}\n\nDO NOT address other panelists. Speak to the person who asked. Two sentences naming the tension, then ONE specific answerable question to them. End on the question. Under 60 words.`;
+  } else {
+    userContent += `\n\nWhat's been said:\n\n${transcript}\n\n---\nDirector's note: ${directorInstruction}\n\nReact. Name the specific claim and person you're pushing on. Under 70 words.`;
+  }
 
   const stream = client.messages.stream({
     model: "claude-sonnet-4-6",
@@ -832,7 +837,7 @@ export async function streamReactionTurn(
     }
   }
 
-  return { response: fullText, role: member.role };
+  return { response: stripMarkdownEmphasis(fullText), role: member.role };
 }
 
 // ── Session Artifact ──

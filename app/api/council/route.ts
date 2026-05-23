@@ -284,11 +284,14 @@ export async function POST(req: NextRequest) {
         }
 
         // ═══ PHASE 2: Director-Driven Reactions (with Hand-Raise Override) ═══
+        // Goal: 1-2 inter-advisor reactions, then a designated "user handoff" turn.
+        // The conversation should pause and invite the user back in — not loop forever.
         if (!isSinglePersona && nonModerators.length >= 2) {
-          // Adaptive max reactions based on question depth/length
-          // Simple heuristic: longer questions get more exchanges
-          const questionDepth = question.length > 120 ? 4 : question.length > 60 ? 3 : 2;
-          const maxReactions = Math.min(nonModerators.length * 2, questionDepth);
+          // Reactions BEFORE the user handoff. Keep it short — the panel should not
+          // talk past the user.
+          const interReactions = question.length > 120 ? 2 : question.length > 60 ? 1 : 1;
+          // +1 for the handoff turn that addresses the user directly
+          const maxReactions = Math.min(nonModerators.length * 2, interReactions + 1);
 
           send({ type: "phase_change", phase: "reaction" });
 
@@ -298,6 +301,8 @@ export async function POST(req: NextRequest) {
           let lastMoveContext: { moveType: MoveType; addressedTo: string | null } | undefined;
 
           for (let i = 0; i < maxReactions; i++) {
+            // The last iteration is the explicit handoff back to the user.
+            const isHandoffTurn = i === maxReactions - 1;
             try {
               const eligibleMembers = nonModerators.filter(
                 (m) => (reactionCountsLocal[m.personaId] ?? 0) < 2
@@ -393,6 +398,14 @@ export async function POST(req: NextRequest) {
                 getDomainExpertById(reactionMember.personaId);
               if (!reactionPersona) break;
 
+              // ── Handoff turn override ──
+              // The last reaction is not advisor-to-advisor — it's advisor-to-user.
+              // Override the director's instruction with one that turns the
+              // conversation back to the person asking.
+              if (isHandoffTurn) {
+                instruction = `This is the moment to hand the conversation back to the person who asked. Don't address other panelists. Speak directly to them. In 2-3 sentences: name the specific tension the panel surfaced, then ask them ONE concrete question they need to answer before this conversation can move forward. The question must be answerable — not philosophical. End on that question. Do not summarize.`;
+              }
+
               // Send thinking indicator
               send({ type: "persona_thinking", personaId: reactionMember.personaId });
 
@@ -422,7 +435,8 @@ export async function POST(req: NextRequest) {
                 memoriesMap[reactionMember.personaId],
                 knowledgeMap[reactionMember.personaId],
                 stances[reactionMember.personaId],
-                panelistDescriptions
+                panelistDescriptions,
+                isHandoffTurn
               );
 
               // Update allResponses with latest (overwrites initial take)

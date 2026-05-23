@@ -30,6 +30,15 @@ interface Scenario {
 
 const scenarios: Scenario[] = [
   {
+    name: "Wealth Planning (user's actual scenario)",
+    question: "a couple planning wealth creation for 10 year with earning of 2 lac a month",
+    members: [
+      { personaId: "naval-style", role: "default" },
+      { personaId: "munger-style", role: "default" },
+      { personaId: "sharp-contrarian", role: "critic" },
+    ],
+  },
+  {
     name: "Career — Student",
     question: "I am a student of class 10 and need guidance for further studies",
     members: [
@@ -178,7 +187,7 @@ async function runScenario(scenario: Scenario): Promise<void> {
     });
   }
 
-  // 3. Phase 2 — reactions (max 3)
+  // 3. Phase 2 — reactions (interReactions + 1 handoff)
   console.log("\n\n[Phase 2 — Reactions]");
   const roster = members.map((m) => ({
     personaId: m.personaId,
@@ -186,8 +195,11 @@ async function runScenario(scenario: Scenario): Promise<void> {
     role: m.role,
   }));
 
-  const MAX_REACTIONS = 3;
+  // Mirror prod logic: 1-2 inter-advisor turns + 1 handoff turn
+  const interReactions = question.length > 120 ? 2 : 1;
+  const MAX_REACTIONS = interReactions + 1;
   for (let r = 0; r < MAX_REACTIONS; r++) {
+    const isHandoffTurn = r === MAX_REACTIONS - 1;
     const lastTurn = turns[turns.length - 1];
     const lastMoveContext = await classifyMove(lastTurn, roster);
 
@@ -211,8 +223,14 @@ async function runScenario(scenario: Scenario): Promise<void> {
       break;
     }
 
-    console.log(`\n  [Director picks ${speakerPersona.name}; last move was ${lastMoveContext.moveType}${lastMoveContext.addressedTo ? ` → ${lastMoveContext.addressedTo}` : ""}]`);
-    console.log(`  [Director instruction: "${decision.instruction}"]`);
+    let instruction = decision.instruction;
+    if (isHandoffTurn) {
+      instruction = `This is the moment to hand the conversation back to the person who asked. Don't address other panelists. Speak directly to them. In 2-3 sentences: name the specific tension the panel surfaced, then ask them ONE concrete question they need to answer before this conversation can move forward. The question must be answerable — not philosophical. End on that question. Do not summarize.`;
+    }
+
+    const handoffTag = isHandoffTurn ? " [HANDOFF]" : "";
+    console.log(`\n  [Director picks ${speakerPersona.name}${handoffTag}; last move was ${lastMoveContext.moveType}${lastMoveContext.addressedTo ? ` → ${lastMoveContext.addressedTo}` : ""}]`);
+    if (!isHandoffTurn) console.log(`  [Director instruction: "${decision.instruction}"]`);
     process.stdout.write(`\n  ${speakerPersona.name}: `);
 
     let response = "";
@@ -220,7 +238,7 @@ async function runScenario(scenario: Scenario): Promise<void> {
       speakerMember,
       question,
       turns,
-      decision.instruction,
+      instruction,
       members,
       [],
       undefined,
@@ -231,7 +249,8 @@ async function runScenario(scenario: Scenario): Promise<void> {
       undefined,
       undefined,
       stances[speakerMember.personaId],
-      panelistDescriptions
+      panelistDescriptions,
+      isHandoffTurn
     );
     response = result.response;
 
@@ -249,21 +268,21 @@ async function runScenario(scenario: Scenario): Promise<void> {
   const names = members.map((m) => getPersona(m.personaId)?.name ?? m.personaId);
   const firstNames = names.map((n) => n.replace(/^The\s/, "").split(" ")[0]);
 
-  for (const turn of turns) {
+  for (let idx = 0; idx < turns.length; idx++) {
+    const turn = turns[idx];
     const p = getPersona(turn.personaId);
     const sentences = countSentences(turn.response);
     const words = wordCount(turn.response);
     const hasMd = detectAsterisks(turn.response);
     const artRefs = detectArtificialReferences(turn.response, names);
-    const peerReferences = firstNames.filter((fn) => {
-      const others = firstNames.filter((other) => other !== fn);
-      return others.some((o) => turn.response.includes(o));
-    });
     const namedPeers = firstNames.filter(
       (fn) =>
         fn !== (p?.name ?? "").replace(/^The\s/, "").split(" ")[0] &&
         turn.response.includes(fn)
     );
+
+    const isHandoff = idx === turns.length - 1 && turn.phase === "reaction";
+    const endsWithQuestion = /\?\s*$/.test(turn.response.trim());
 
     const flags: string[] = [];
     if (sentences > 4) flags.push(`LONG(${sentences} sentences)`);
@@ -271,15 +290,18 @@ async function runScenario(scenario: Scenario): Promise<void> {
     if (words > 100) flags.push(`VERBOSE(${words} words)`);
     if (hasMd) flags.push("MARKDOWN");
     if (artRefs.hasAnticipatoryRef) flags.push("ANTICIPATORY_REF");
-    if (turn.phase === "initial" && namedPeers.length > 0 && turn === turns[0]) {
+    if (turn.phase === "initial" && namedPeers.length > 0 && idx === 0) {
       flags.push("FIRST_SPEAKER_NAMES_PEERS");
     }
+    if (isHandoff && namedPeers.length > 0) flags.push("HANDOFF_ADDRESSES_PEERS");
+    if (isHandoff && !endsWithQuestion) flags.push("HANDOFF_NO_QUESTION");
 
     const peerNote = namedPeers.length > 0 ? ` [refs: ${namedPeers.join(", ")}]` : "";
     const flagsNote = flags.length > 0 ? ` ⚠ ${flags.join(", ")}` : " ✓";
+    const handoffTag = isHandoff ? " 🎯HANDOFF" : "";
 
     console.log(
-      `  ${turn.phase[0].toUpperCase()}${turn.turnIndex} ${p?.name}: ${sentences}s/${words}w${peerNote}${flagsNote}`
+      `  ${turn.phase[0].toUpperCase()}${turn.turnIndex} ${p?.name}${handoffTag}: ${sentences}s/${words}w${peerNote}${flagsNote}`
     );
   }
 }
