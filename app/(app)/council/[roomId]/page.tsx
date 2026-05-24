@@ -133,6 +133,11 @@ function CouncilChatInner() {
   const personas = members.map((m) => getPersona(m.personaId)).filter(Boolean) as PersonaDefinition[];
   const hasDomainExperts = personas.some((p) => p.personaType === "domain_expert");
 
+  // Is the conversation currently waiting on the user to answer a handoff?
+  const latestMessage = messages[messages.length - 1];
+  const latestTurn = latestMessage?.conversation_turns?.[latestMessage.conversation_turns.length - 1];
+  const isHandoffPending = !isLoading && !!latestTurn?.isHandoff;
+
   return (
     <div className="flex flex-col h-[calc(100vh-48px)] lg:h-screen">
       {/* Disclaimer modal (one-time) */}
@@ -223,12 +228,17 @@ function CouncilChatInner() {
         <div ref={bottomRef} />
       </div>
 
-      {/* Input */}
+      {/* Input — placeholder shifts when latest turn is a handoff */}
       <CouncilInput
         onSubmit={handleQuestion}
         onStop={stopCouncil}
         disabled={isLoading}
-        placeholder={`Ask your ${room.title || "council"}... or @Name to address one member`}
+        placeholder={
+          isHandoffPending
+            ? "Answer their question…"
+            : `Ask your ${room.title || "council"}…`
+        }
+        focusRing={isHandoffPending}
         members={members}
         initialValue={prefillInput ?? undefined}
         onInitialValueConsumed={() => setPrefillInput(null)}
@@ -328,13 +338,35 @@ function CouncilMessageBlock({
             const p = getPersona(turn.personaId);
             if (!p) return null;
 
-            // Show phase divider before first reaction turn
+            // Phase dividers
+            const prevTurn = idx > 0 ? message.conversation_turns![idx - 1] : null;
+            const isFirstScoping = turn.phase === "scoping" && idx === 0;
+            const isFirstInitialAfterScoping =
+              turn.phase === "initial" && prevTurn?.phase === "scoping";
             const isFirstReaction =
               turn.phase === "reaction" &&
-              (idx === 0 || message.conversation_turns![idx - 1].phase === "initial");
+              (idx === 0 || prevTurn?.phase === "initial" || prevTurn?.phase === "scoping");
 
             return (
               <div key={`turn-${turn.turnIndex}`}>
+                {isFirstScoping && (
+                  <div className="flex items-center gap-3 py-2">
+                    <div className="h-px flex-1 bg-surface-border" />
+                    <span className="text-[10px] text-text-muted uppercase tracking-wider font-medium">
+                      Setting context
+                    </span>
+                    <div className="h-px flex-1 bg-surface-border" />
+                  </div>
+                )}
+                {isFirstInitialAfterScoping && (
+                  <div className="flex items-center gap-3 py-2">
+                    <div className="h-px flex-1 bg-surface-border" />
+                    <span className="text-[10px] text-text-muted uppercase tracking-wider font-medium">
+                      Takes
+                    </span>
+                    <div className="h-px flex-1 bg-surface-border" />
+                  </div>
+                )}
                 {isFirstReaction && (
                   <div className="flex items-center gap-3 py-2">
                     <div className="h-px flex-1 bg-surface-border" />
@@ -350,6 +382,8 @@ function CouncilMessageBlock({
                   isStreaming={false}
                   speakerSource={turn.speakerSource}
                   hasMemory={!!message.personaMemoryCounts?.[turn.personaId]}
+                  isScoping={turn.phase === "scoping"}
+                  isHandoff={!!turn.isHandoff}
                 />
               </div>
             );
@@ -486,13 +520,17 @@ function CouncilMessageBlock({
           <SessionArtifact artifact={message.sessionArtifact} />
         )}
 
-      {/* Follow-up chips */}
-      {showChips && (
-        <FollowUpChips
-          chips={message.suggestedChips!}
-          onChipClick={onChipClick}
-        />
-      )}
+      {/* Follow-up chips — render as quick replies if the conversation just handed off */}
+      {showChips && (() => {
+        const lastTurn = message.conversation_turns?.[message.conversation_turns.length - 1];
+        return (
+          <FollowUpChips
+            chips={message.suggestedChips!}
+            onChipClick={onChipClick}
+            isAnswerOptions={!!lastTurn?.isHandoff}
+          />
+        );
+      })()}
 
       {/* Feedback (only on latest completed message) */}
       {isLatest &&

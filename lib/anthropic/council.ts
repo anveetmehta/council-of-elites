@@ -717,6 +717,22 @@ export async function generateFollowUpChips(
       .join("\n\n");
   }
 
+  // Detect if the conversation ended with a handoff question to the user.
+  // If yes, generate chips that ANSWER it (so the user can click instead of typing).
+  const handoffTurn = turns?.find((t) => t.isHandoff);
+  const handoffQuestion = handoffTurn?.response.match(/[^.!?]*\?\s*$/)?.[0]?.trim();
+
+  const promptText = handoffQuestion
+    ? `The panel just asked the user this specific question: "${handoffQuestion}"
+
+Generate 3 short ANSWER OPTIONS the user might click instead of typing. These should be plausible, specific answers a real person might give — not more questions. Examples of good format: "~₹1.5L take-home, spending 1.2L", "Yes, my spouse is fully on board", "Around 6 months runway saved".
+
+Return ONLY a JSON array of 3 strings, each under 14 words.
+
+Discussion context:
+${conversationText}`
+    : `Based on this panel discussion about "${question}", suggest 3 short follow-up questions that dig into specific disagreements, tensions, or gaps. Reference at least one advisor by name in 2 of the 3 questions. Return ONLY a JSON array of 3 strings, each under 12 words.\n\nDiscussion:\n${conversationText}`;
+
   try {
     const message = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
@@ -724,7 +740,7 @@ export async function generateFollowUpChips(
       messages: [
         {
           role: "user",
-          content: `Based on this panel discussion about "${question}", suggest 3 short follow-up questions that dig into specific disagreements, tensions, or gaps. Reference at least one advisor by name in 2 of the 3 questions. Make them feel like they came from this conversation, not a generic list. Return ONLY a JSON array of 3 strings, each under 12 words.\n\nDiscussion:\n${conversationText}`,
+          content: promptText,
         },
       ],
     });

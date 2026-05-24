@@ -39,6 +39,8 @@ export interface ConversationTurn {
   // Track why this person is speaking
   userRequestedSpeaker?: boolean; // True if user hand-raised them
   speakerSource?: 'user' | 'director' | 'system'; // Who decided this speaker
+  // Marks this reaction turn as the "ball back to user" turn
+  isHandoff?: boolean;
 }
 
 /** AI Director decision — who speaks next? */
@@ -68,7 +70,7 @@ export interface CouncilMessage {
   streamingPersonaId?: string;
   streamingModeratorId?: string;
   suggestedChips?: string[];
-  currentPhase?: "introduction" | "initial" | "reaction" | "wrap-up";
+  currentPhase?: "scoping" | "introduction" | "initial" | "reaction" | "wrap-up";
   // End-of-session clarity artifact
   sessionArtifact?: SessionArtifact;
   // Memory counts per persona (how many memories they have of this user)
@@ -90,8 +92,8 @@ export type SSEEvent =
   | { type: "persona_memories"; counts: Record<string, number> }
   | { type: "done"; councilMessageId: string | null }
   | { type: "error"; message: string }
-  | { type: "turn_done"; turnIndex: number; personaId: string; fullResponse: string; role: CouncilRole; phase: string; userRequestedSpeaker?: boolean; speakerSource?: 'user' | 'director' | 'system' }
-  | { type: "phase_change"; phase: "initial" | "reaction" | "wrap-up" | "introduction" };
+  | { type: "turn_done"; turnIndex: number; personaId: string; fullResponse: string; role: CouncilRole; phase: string; userRequestedSpeaker?: boolean; speakerSource?: 'user' | 'director' | 'system'; isHandoff?: boolean }
+  | { type: "phase_change"; phase: "scoping" | "initial" | "reaction" | "wrap-up" | "introduction" };
 
 export interface RecommendedCouncil {
   id: string;

@@ -169,10 +169,11 @@ export function useCouncil(initialMessages: CouncilMessage[] = []): UseCouncilRe
                   turnIndex: event.turnIndex,
                   personaId: event.personaId,
                   role: event.role,
-                  phase: event.phase as "initial" | "reaction",
+                  phase: event.phase as "scoping" | "initial" | "reaction",
                   response: event.fullResponse,
                   userRequestedSpeaker: event.userRequestedSpeaker,
                   speakerSource: event.speakerSource,
+                  isHandoff: event.isHandoff,
                 });
                 currentTurnIndex = event.turnIndex + 1;
 

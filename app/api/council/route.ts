@@ -532,6 +532,7 @@ export async function POST(req: NextRequest) {
                 response: result.response,
                 userRequestedSpeaker: speakerSource === 'user',
                 speakerSource,
+                isHandoff: isHandoffTurn,
               };
               turns.push(turn);
 
@@ -542,6 +543,7 @@ export async function POST(req: NextRequest) {
                 fullResponse: result.response,
                 role: reactionMember.role,
                 phase: "reaction",
+                isHandoff: isHandoffTurn,
                 userRequestedSpeaker: speakerSource === 'user',
                 speakerSource,
               });

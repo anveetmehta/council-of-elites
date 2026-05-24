@@ -31,6 +31,8 @@ interface PersonaResponseCardProps {
   isThinking?: boolean; // Show "X is thinking..." state
   speakerSource?: 'user' | 'director' | 'system'; // Why they're speaking
   hasMemory?: boolean; // Whether this persona has memories of the user
+  isScoping?: boolean; // This is a "setting context" turn before any takes
+  isHandoff?: boolean; // This turn hands the conversation back to the user
 }
 
 export function PersonaResponseCard({
@@ -41,6 +43,8 @@ export function PersonaResponseCard({
   isThinking = false,
   speakerSource,
   hasMemory = false,
+  isScoping = false,
+  isHandoff = false,
 }: PersonaResponseCardProps) {
   const { label, className: roleClass } = getRoleBadgeConfig(response.role);
   const leftBorder = getRoleLeftBorderClass(response.role);
@@ -100,8 +104,13 @@ export function PersonaResponseCard({
   return (
     <div
       className={cn(
-        "rounded-xl border border-surface-border bg-surface-raised p-4 border-l-4 animate-fade-up",
-        leftBorder || "border-l-surface-border"
+        "rounded-xl border bg-surface-raised p-4 border-l-4 animate-fade-up",
+        leftBorder || "border-l-surface-border",
+        isHandoff
+          ? "border-accent/40 ring-1 ring-accent/20 bg-gradient-to-b from-accent/5 to-transparent"
+          : isScoping
+          ? "border-surface-border opacity-90"
+          : "border-surface-border"
       )}
       style={
         !leftBorder
@@ -129,6 +138,16 @@ export function PersonaResponseCard({
                   Knows you
                 </span>
               )}
+              {isScoping && (
+                <span className="inline-flex items-center gap-1 text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300">
+                  Scoping
+                </span>
+              )}
+              {isHandoff && (
+                <span className="inline-flex items-center gap-1 text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-accent/15 border border-accent/40 text-accent">
+                  Over to you
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-1.5">
               <p className="text-[10px] text-text-muted">{persona.tagline}</p>
@@ -139,7 +158,7 @@ export function PersonaResponseCard({
           </div>
         </div>
 
-        {response.role !== "default" && (
+        {response.role !== "default" && !isScoping && !isHandoff && (
           <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded border whitespace-nowrap", roleClass)}>
             {label}
           </span>
@@ -147,12 +166,22 @@ export function PersonaResponseCard({
       </div>
 
       {/* Response */}
-      <div className="response-content text-sm text-text-secondary leading-relaxed">
+      <div className={cn(
+        "response-content text-sm leading-relaxed",
+        isHandoff ? "text-text-primary" : "text-text-secondary"
+      )}>
         <ResponseText text={response.response} />
         {isStreaming && (
           <span className="inline-block w-0.5 h-3.5 bg-text-muted animate-pulse ml-0.5 align-middle" />
         )}
       </div>
+
+      {/* Handoff prompt indicator */}
+      {isHandoff && !isStreaming && (
+        <div className="mt-3 pt-3 border-t border-accent/15 flex items-center gap-2 text-[10px] text-accent">
+          <span>↓ Answer below to continue</span>
+        </div>
+      )}
     </div>
   );
 }

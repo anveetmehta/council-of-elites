@@ -17,6 +17,7 @@ interface CouncilInputProps {
   members?: CouncilMember[];
   initialValue?: string;
   onInitialValueConsumed?: () => void;
+  focusRing?: boolean; // Accent ring + glow to signal "your turn"
 }
 
 export function CouncilInput({
@@ -27,6 +28,7 @@ export function CouncilInput({
   members,
   initialValue,
   onInitialValueConsumed,
+  focusRing = false,
 }: CouncilInputProps) {
   const [value, setValue] = useState("");
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -187,7 +189,13 @@ export function CouncilInput({
             </div>
           )}
 
-          <div className="flex items-end gap-3 rounded-xl border border-surface-border bg-surface-raised px-4 py-3 focus-within:border-accent/40 transition-colors">
+          <div
+            className={
+              focusRing
+                ? "flex items-end gap-3 rounded-xl border border-accent/40 bg-surface-raised px-4 py-3 focus-within:border-accent/60 ring-1 ring-accent/20 transition-colors"
+                : "flex items-end gap-3 rounded-xl border border-surface-border bg-surface-raised px-4 py-3 focus-within:border-accent/40 transition-colors"
+            }
+          >
             <textarea
               ref={textareaRef}
               value={value}
