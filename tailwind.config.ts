@@ -10,40 +10,44 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
+        // ── Light editorial palette — warm cream + ink ────────────────────
+        // Layered surfaces so cards feel lifted off the page without harsh contrast
         surface: {
-          DEFAULT: "#0F0F0F",
-          raised: "#171717",
-          overlay: "#1F1F1F",
-          border: "#2A2A2A",
+          DEFAULT: "#FBFAF6",      // page background — warm cream
+          raised: "#FFFFFF",        // cards lift off the background
+          overlay: "#F4F1E9",       // hover / muted surface
+          border: "#E5E0D2",        // subtle warm border
+          strong: "#D6CFBE",        // emphasized border
         },
         accent: {
-          DEFAULT: "#A78BFA",
-          hover: "#C4B5FD",
-          muted: "#4C3D6B",
+          DEFAULT: "#6D5BE3",       // refined indigo — pops on cream without screaming
+          hover: "#5E4DD0",
+          muted: "#EDEAFB",         // light accent bg for chips/badges
+          border: "#C4BCF4",
         },
         text: {
-          primary: "#F5F5F5",
-          secondary: "#A3A3A3",
-          muted: "#525252",
+          primary: "#1A1815",       // warm near-black
+          secondary: "#544E44",     // warm slate
+          muted: "#8A847A",         // lighter warm gray
         },
         role: {
-          advocate: "#16A34A",
-          "advocate-bg": "#052E16",
-          "advocate-border": "#166534",
-          critic: "#DC2626",
-          "critic-bg": "#450A0A",
-          "critic-border": "#991B1B",
-          moderator: "#7C3AED",
-          "moderator-bg": "#2E1065",
-          "moderator-border": "#5B21B6",
-          questioner: "#2563EB",
-          "questioner-bg": "#172554",
-          "questioner-border": "#1D4ED8",
+          advocate: "#15803D",
+          "advocate-bg": "#DCFCE7",
+          "advocate-border": "#86EFAC",
+          critic: "#B91C1C",
+          "critic-bg": "#FEE2E2",
+          "critic-border": "#FCA5A5",
+          moderator: "#6D28D9",
+          "moderator-bg": "#EDE9FE",
+          "moderator-border": "#C4B5FD",
+          questioner: "#1D4ED8",
+          "questioner-bg": "#DBEAFE",
+          "questioner-border": "#93C5FD",
         },
       },
       fontFamily: {
-        sans: ["Inter", "system-ui", "sans-serif"],
-        serif: ["var(--font-instrument-serif)", "Lora", "Georgia", "serif"],
+        sans: ["var(--font-jakarta)", "Inter", "system-ui", "sans-serif"],
+        serif: ["var(--font-instrument-serif)", "Fraunces", "Georgia", "serif"],
       },
       animation: {
         "cursor-blink": "blink 1s step-end infinite",

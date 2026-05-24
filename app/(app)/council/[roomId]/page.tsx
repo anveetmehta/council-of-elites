@@ -17,6 +17,7 @@ import { DisclaimerModal } from "@/components/legal/DisclaimerModal";
 import { DisclaimerBanner } from "@/components/legal/DisclaimerBanner";
 import { PersonaAvatar } from "@/components/personas/PersonaAvatar";
 import { SessionArtifact } from "@/components/council/SessionArtifact";
+import { CouncilEmptyState } from "@/components/council/CouncilEmptyState";
 import { extractMentionHandle, getPersonaHandle } from "@/lib/utils";
 import { Loader2, Share2, Check } from "lucide-react";
 
@@ -192,10 +193,11 @@ function CouncilChatInner() {
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-6 py-6 space-y-8">
         {messages.length === 0 && !isLoading && (
-          <div className="text-center py-16">
-            <p className="text-sm text-text-secondary mb-2">Your council is assembled.</p>
-            <p className="text-xs text-text-muted">Ask them a question below.</p>
-          </div>
+          <CouncilEmptyState
+            members={members}
+            topic={room.topic}
+            onQuestionClick={(q) => handleQuestion(q)}
+          />
         )}
 
         {/* Loading indicator for very first question */}

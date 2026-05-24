@@ -1,15 +1,20 @@
 import type { Metadata } from "next";
-import { Instrument_Serif } from "next/font/google";
+import { Instrument_Serif, Plus_Jakarta_Sans } from "next/font/google";
 import "./globals.css";
 import { PostHogProvider } from "@/components/providers/PostHogProvider";
-import { GrainOverlay } from "@/components/GrainOverlay";
-import { CursorHalo } from "@/components/CursorHalo";
 
 const instrumentSerif = Instrument_Serif({
   subsets: ["latin"],
   weight: "400",
   style: ["normal", "italic"],
   variable: "--font-instrument-serif",
+  display: "swap",
+});
+
+const jakarta = Plus_Jakarta_Sans({
+  subsets: ["latin"],
+  weight: ["300", "400", "500", "600", "700"],
+  variable: "--font-jakarta",
   display: "swap",
 });
 
@@ -25,15 +30,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en">
       <body
-        className={`${instrumentSerif.variable} bg-surface text-text-primary min-h-screen`}
-        style={{ fontFamily: "Inter, system-ui, sans-serif" }}
+        className={`${instrumentSerif.variable} ${jakarta.variable} bg-surface text-text-primary min-h-screen antialiased`}
       >
-        {/* Grain texture — subtle dark-mode film grain */}
-        <GrainOverlay />
-        {/* Cursor halo — accent purple spring-follower */}
-        <CursorHalo />
         <PostHogProvider>{children}</PostHogProvider>
       </body>
     </html>
