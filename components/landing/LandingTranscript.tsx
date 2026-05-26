@@ -11,16 +11,16 @@ const SAMPLE_QUESTION = "Should I leave my job to bootstrap, or raise funding fo
 
 const SAMPLE_TURNS: TranscriptTurn[] = [
   {
-    personaId: "munger-style",
-    text: "Inversion first: list what would guarantee you regret each path in five years. Most founders confuse momentum with progress. Naval, you write about leverage constantly — doesn't bootstrapping force exactly the discipline that outside funding postpones?",
+    personaId: "eitan-bergmann",
+    text: "May I be impolite? You're asking bootstrap-vs-raise, but that's not the real question. The real question is: do you believe in this idea enough to find out if it's true? Because funding debates are a sophisticated way to avoid committing. Hana — what do the numbers say about this?",
   },
   {
-    personaId: "naval-style",
-    text: "Charlie's right about the discipline. But I'd push back — bootstrapping forces discipline at the cost of slope. The real question isn't bootstrap-vs-raise. It's whether your idea compounds at scale or works fine at small scale. That answer determines everything.",
+    personaId: "hana-mori",
+    text: "The numbers say: what's the unit economics story? If this business needs scale to work, you need capital and you probably need it now. If it works at small scale with strong margins, bootstrap and you keep the upside. Eitan is right that the question underneath is: which of those is this?",
   },
   {
-    personaId: "sharp-contrarian",
-    text: "Both of you are answering the question they asked. The question they're avoiding is whether they actually believe in this enough to leave their job. Strategy debates are a way to feel productive without committing. What are you really doing here?",
+    personaId: "maya-krishnan",
+    text: "Okay. Three moves from now — if you raise, who else raises in this space in the next 18 months? And what does that competition look like when you've spent half your runway building? The answer to that question is more important than your current burn rate.",
   },
 ];
 

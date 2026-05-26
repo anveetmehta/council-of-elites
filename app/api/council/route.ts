@@ -32,6 +32,7 @@ import {
 import { retrieveKnowledge } from "@/lib/knowledge";
 import { getPersonaById } from "@/data/personas";
 import { getDomainExpertById } from "@/data/domain-experts";
+import { conductorSelectSpeakers } from "@/lib/anthropic/conductor";
 import { CouncilMember, PersonaResponse, SSEEvent, ConversationTurn, DirectorDecision } from "@/types/council.types";
 
 function shuffleArray<T>(arr: T[]): T[] {
@@ -80,9 +81,9 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  if (members.length < 1 || members.length > 4) {
+  if (members.length < 1 || members.length > 10) {
     return new Response(
-      JSON.stringify({ error: "Council must have 1-4 members" }),
+      JSON.stringify({ error: "Council must have 1-10 members" }),
       { status: 400, headers: { "Content-Type": "application/json" } }
     );
   }
@@ -217,10 +218,10 @@ export async function POST(req: NextRequest) {
           try {
             const needsScoping = await classifyNeedsScoping(question);
             if (needsScoping) {
-              // Prefer contrarian, then strategic-leader, then critic role, then any
+              // Prefer Eitan (provocateur/reframer), then Maya (strategist), then any
               const scoper =
-                nonModerators.find((m) => m.personaId === "sharp-contrarian") ??
-                nonModerators.find((m) => m.personaId === "strategic-leader") ??
+                nonModerators.find((m) => m.personaId === "eitan-bergmann") ??
+                nonModerators.find((m) => m.personaId === "maya-krishnan") ??
                 nonModerators.find((m) => m.role === "critic") ??
                 nonModerators[0];
 
@@ -289,15 +290,40 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        // ═══ PHASE 1: Initial Takes (shuffled order) ═══
-        const shuffledNonModerators = isSinglePersona
-          ? nonModerators
-          : shuffleArray(nonModerators);
+        // ═══ PHASE 1: Initial Takes (conductor-selected speakers) ═══
+        // The conductor picks 2-4 of the 8 advisors based on the question's domain.
+        // Falls back to first 3 members if the conductor call fails.
+        let phase1Members: CouncilMember[] = nonModerators;
+        if (!isSinglePersona && nonModerators.length > 2) {
+          try {
+            const decision = await conductorSelectSpeakers({
+              question,
+              allMembers: nonModerators,
+              phase: "initial",
+            });
+            // Map back to CouncilMember objects, preserving roles
+            const selectedIds = decision.speakers.map((s) => s.personaId);
+            phase1Members = selectedIds
+              .map((id) => nonModerators.find((m) => m.personaId === id))
+              .filter((m): m is CouncilMember => !!m);
+            // Inject briefings into stances if provided
+            for (const speaker of decision.speakers) {
+              if (speaker.briefing && stances[speaker.personaId] !== undefined) {
+                stances[speaker.personaId] =
+                  (stances[speaker.personaId] ?? "") +
+                  `\n\n[Conductor briefing: ${speaker.briefing}]`;
+              }
+            }
+          } catch (err) {
+            console.error("[Conductor] Phase 1 selection failed, using fallback:", err);
+            phase1Members = nonModerators.slice(0, 3);
+          }
+        }
 
         send({ type: "phase_change", phase: "initial" });
 
-        for (let pIdx = 0; pIdx < shuffledNonModerators.length; pIdx++) {
-          const member = shuffledNonModerators[pIdx];
+        for (let pIdx = 0; pIdx < phase1Members.length; pIdx++) {
+          const member = phase1Members[pIdx];
           const persona =
             getPersonaById(member.personaId) ||
             getDomainExpertById(member.personaId);
@@ -312,7 +338,7 @@ export async function POST(req: NextRequest) {
             role: member.role,
           });
 
-          const isLastInPhase1 = pIdx === shuffledNonModerators.length - 1;
+          const isLastInPhase1 = pIdx === phase1Members.length - 1;
 
           const result = await streamPersonaWithHistory(
             member,
@@ -382,6 +408,30 @@ export async function POST(req: NextRequest) {
           const reactionCountsLocal: Record<string, number> = {};
           let lastMoveContext: { moveType: MoveType; addressedTo: string | null } | undefined;
 
+          // Conductor pre-selects the reaction order for Phase 2
+          let conductorReactionOrder: string[] = [];
+          if (!isSinglePersona && nonModerators.length > 2) {
+            try {
+              const serializedHistory = turns
+                .slice(-4)
+                .map((t) => {
+                  const p = getPersonaById(t.personaId) || getDomainExpertById(t.personaId);
+                  return `${p?.name ?? t.personaId}: ${t.response.slice(0, 120)}...`;
+                })
+                .join("\n");
+              const reactionDecision = await conductorSelectSpeakers({
+                question,
+                allMembers: nonModerators,
+                phase: "reaction",
+                conversationHistory: serializedHistory,
+                previousSpeakers: phase1Members.map((m) => m.personaId),
+              });
+              conductorReactionOrder = reactionDecision.speakers.map((s) => s.personaId);
+            } catch {
+              conductorReactionOrder = [];
+            }
+          }
+
           for (let i = 0; i < maxReactions; i++) {
             // The last iteration is the explicit handoff back to the user.
             const isHandoffTurn = i === maxReactions - 1;
@@ -434,7 +484,22 @@ export async function POST(req: NextRequest) {
                 }
               }
 
-              // Otherwise use director
+              // Otherwise: use conductor order, then director, then fallback
+              if (!reactionMember) {
+                // Try conductor-pre-selected order first
+                if (conductorReactionOrder.length > 0) {
+                  const nextConductorId = conductorReactionOrder.find(
+                    (id) => eligibleMembers.some((m) => m.personaId === id)
+                  );
+                  if (nextConductorId) {
+                    reactionMember = eligibleMembers.find((m) => m.personaId === nextConductorId);
+                    conductorReactionOrder = conductorReactionOrder.filter((id) => id !== nextConductorId);
+                    instruction = "React to what has been said. Build on, challenge, or reframe a specific point.";
+                    speakerSource = "director";
+                  }
+                }
+              }
+
               if (!reactionMember) {
                 decision = await callDirector(
                   question,
@@ -449,7 +514,7 @@ export async function POST(req: NextRequest) {
                 if (directorStopping) {
                   if (reactionsCompleted === 0) {
                     reactionMember =
-                      eligibleMembers.find((m) => m.personaId === "sharp-contrarian") ??
+                      eligibleMembers.find((m) => m.personaId === "eitan-bergmann") ??
                       eligibleMembers[Math.floor(Math.random() * eligibleMembers.length)];
                     instruction = "React to the initial perspectives. Push back on a specific point or build on the most interesting idea raised.";
                     speakerSource = 'director';

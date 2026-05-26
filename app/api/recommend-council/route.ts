@@ -65,11 +65,11 @@ ${JSON.stringify(catalog, null, 0)}
 Pick 3-4 advisors. Match the register. Aim for genuine perspective divergence — not 3 analysts saying similar things.
 
 Hard rules:
-- If register is "emotional" or "mixed", include "empathetic-coach"
+- If register is "emotional" or "mixed", include "imani-wright" (the Coach)
 - At most 1 moderator
 - At most 1 questioner
 - Pick advisors whose worldviews would actually CONFLICT in interesting ways
-- Domain experts (Munger, Naval, Aurelius, etc.) are powerful — use them when the topic matches their lane
+- Match advisor specialty (conductorTags) to the topic domain
 
 Also write a single PREVIEW line — one sentence describing the dynamic this panel will produce. Format: "[Name] will [verb] [specific thing]. [Name] will [verb] [specific thing]. [Name] will [verb] [specific thing]."
 

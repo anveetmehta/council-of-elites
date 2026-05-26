@@ -194,7 +194,6 @@ function CouncilChatInner() {
       <div className="flex-1 overflow-y-auto px-6 py-6 space-y-8">
         {messages.length === 0 && !isLoading && (
           <CouncilEmptyState
-            members={members}
             topic={room.topic}
             onQuestionClick={(q) => handleQuestion(q)}
           />
