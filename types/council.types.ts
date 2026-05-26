@@ -90,6 +90,7 @@ export type SSEEvent =
   | { type: "chips"; questions: string[] }
   | { type: "session_artifact"; artifact: SessionArtifact }
   | { type: "persona_memories"; counts: Record<string, number> }
+  | { type: "speakers_selected"; phasePersonaIds: string[] } // Conductor selection for phase — tells UI which personas to expect
   | { type: "done"; councilMessageId: string | null }
   | { type: "error"; message: string }
   | { type: "turn_done"; turnIndex: number; personaId: string; fullResponse: string; role: CouncilRole; phase: string; userRequestedSpeaker?: boolean; speakerSource?: 'user' | 'director' | 'system'; isHandoff?: boolean }

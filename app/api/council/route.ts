@@ -33,6 +33,12 @@ import { retrieveKnowledge } from "@/lib/knowledge";
 import { getPersonaById } from "@/data/personas";
 import { getDomainExpertById } from "@/data/domain-experts";
 import { conductorSelectSpeakers } from "@/lib/anthropic/conductor";
+import {
+  selectInterventionPersona,
+  getBriefingForIntervention,
+  getIntentForIntervention,
+  logPathologyAction,
+} from "@/lib/anthropic/pathology-actions";
 import { CouncilMember, PersonaResponse, SSEEvent, ConversationTurn, DirectorDecision } from "@/types/council.types";
 
 function shuffleArray<T>(arr: T[]): T[] {
@@ -301,14 +307,46 @@ export async function POST(req: NextRequest) {
               allMembers: nonModerators,
               phase: "initial",
             });
-            // Map back to CouncilMember objects, preserving roles
-            const selectedIds = decision.speakers.map((s) => s.personaId);
-            phase1Members = selectedIds
-              .map((id) => nonModerators.find((m) => m.personaId === id))
-              .filter((m): m is CouncilMember => !!m);
-            // Inject briefings into stances if provided
+
+            // ═══ PATHOLOGY ACTION: Check for conversation pathologies (Phase 1+) ═══
+            if (decision.observation && decision.observation.pathology !== "none") {
+              const pathologyPersonaId = selectInterventionPersona(
+                decision.observation.pathology,
+                nonModerators,
+                conversationHistory
+              );
+
+              if (pathologyPersonaId) {
+                const briefing = getBriefingForIntervention(decision.observation.pathology);
+                logPathologyAction(decision.observation.pathology, pathologyPersonaId, briefing);
+
+                // Override Phase 1 speakers: force intervention persona
+                const interventionMember = nonModerators.find((m) => m.personaId === pathologyPersonaId);
+                if (interventionMember) {
+                  phase1Members = [interventionMember];
+                  // Inject pathology intervention briefing
+                  stances[pathologyPersonaId] =
+                    (stances[pathologyPersonaId] ?? "") +
+                    `\n\n[Conductor Intervention]: ${briefing}`;
+                }
+              } else {
+                // Pathology detected but no intervention persona available — proceed with normal selection
+                const selectedIds = decision.speakers.map((s) => s.personaId);
+                phase1Members = selectedIds
+                  .map((id) => nonModerators.find((m) => m.personaId === id))
+                  .filter((m): m is CouncilMember => !!m);
+              }
+            } else {
+              // No pathology detected — use normal conductor selection
+              const selectedIds = decision.speakers.map((s) => s.personaId);
+              phase1Members = selectedIds
+                .map((id) => nonModerators.find((m) => m.personaId === id))
+                .filter((m): m is CouncilMember => !!m);
+            }
+
+            // Inject briefings into stances if provided by conductor
             for (const speaker of decision.speakers) {
-              if (speaker.briefing && stances[speaker.personaId] !== undefined) {
+              if (speaker.briefing && stances[speaker.personaId] !== undefined && !stances[speaker.personaId].includes("[Conductor")) {
                 stances[speaker.personaId] =
                   (stances[speaker.personaId] ?? "") +
                   `\n\n[Conductor briefing: ${speaker.briefing}]`;
@@ -319,6 +357,10 @@ export async function POST(req: NextRequest) {
             phase1Members = nonModerators.slice(0, 3);
           }
         }
+
+        // Send speakers_selected event BEFORE phase_change so client knows which personas to expect skeletons for
+        const selectedPersonaIds = phase1Members.map((m) => m.personaId);
+        send({ type: "speakers_selected", phasePersonaIds: selectedPersonaIds });
 
         send({ type: "phase_change", phase: "initial" });
 
@@ -399,7 +441,8 @@ export async function POST(req: NextRequest) {
           // talk past the user.
           const interReactions = question.length > 120 ? 2 : question.length > 60 ? 1 : 1;
           // +1 for the handoff turn that addresses the user directly
-          const maxReactions = Math.min(nonModerators.length * 2, interReactions + 1);
+          // Cap at 3 total turns max (conservative, ensures handoff happens soon)
+          const maxReactions = Math.min(3, interReactions + 1);
 
           send({ type: "phase_change", phase: "reaction" });
 
@@ -426,7 +469,27 @@ export async function POST(req: NextRequest) {
                 conversationHistory: serializedHistory,
                 previousSpeakers: phase1Members.map((m) => m.personaId),
               });
-              conductorReactionOrder = reactionDecision.speakers.map((s) => s.personaId);
+
+              // ═══ PATHOLOGY ACTION: Check for conversation pathologies (Reaction phase) ═══
+              if (reactionDecision.observation && reactionDecision.observation.pathology !== "none") {
+                const pathologyPersonaId = selectInterventionPersona(
+                  reactionDecision.observation.pathology,
+                  nonModerators,
+                  conversationHistory
+                );
+
+                if (pathologyPersonaId) {
+                  logPathologyAction(reactionDecision.observation.pathology, pathologyPersonaId, getBriefingForIntervention(reactionDecision.observation.pathology));
+                  // Force intervention persona at the start of reaction order
+                  conductorReactionOrder = [pathologyPersonaId, ...reactionDecision.speakers.map((s) => s.personaId).filter((id) => id !== pathologyPersonaId)];
+                } else {
+                  // No intervention persona available — use normal conductor order
+                  conductorReactionOrder = reactionDecision.speakers.map((s) => s.personaId);
+                }
+              } else {
+                // No pathology detected — use normal conductor order
+                conductorReactionOrder = reactionDecision.speakers.map((s) => s.personaId);
+              }
             } catch {
               conductorReactionOrder = [];
             }

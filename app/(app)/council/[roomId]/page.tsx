@@ -37,7 +37,7 @@ function CouncilChatInner() {
   const initialQuestionFired = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  const { messages, isLoading, error: councilError, setMessages, askCouncil, stopCouncil } = useCouncil([]);
+  const { messages, isLoading, error: councilError, selectedSpeakerIds, setMessages, askCouncil, stopCouncil } = useCouncil([]);
 
   // Load room and messages
   useEffect(() => {
@@ -222,12 +222,21 @@ function CouncilChatInner() {
               onChipClick={handleChipClick}
               onPersonaSelected={setUserSelectedSpeakerId}
               userSelectedSpeakerId={userSelectedSpeakerId}
+              selectedSpeakerIds={selectedSpeakerIds}
             />
           );
         })}
 
         <div ref={bottomRef} />
       </div>
+
+      {/* Visual indicator when waiting for user input */}
+      {isHandoffPending && (
+        <div className="flex items-center justify-center gap-2 px-6 py-3 border-t border-surface-border bg-surface-raised/50">
+          <div className="w-2 h-2 rounded-full bg-accent animate-pulse" />
+          <span className="text-xs text-text-muted">Waiting for your input…</span>
+        </div>
+      )}
 
       {/* Input — placeholder shifts when latest turn is a handoff */}
       <CouncilInput
@@ -270,6 +279,7 @@ function CouncilMessageBlock({
   onChipClick,
   onPersonaSelected,
   userSelectedSpeakerId,
+  selectedSpeakerIds,
 }: {
   message: CouncilMessage;
   members: CouncilMember[];
@@ -277,6 +287,7 @@ function CouncilMessageBlock({
   isActivelyLoading: boolean;
   onChipClick: (chip: string) => void;
   onPersonaSelected?: (personaId: string) => void;
+  selectedSpeakerIds: Set<string>;
   userSelectedSpeakerId?: string | null;
 }) {
   const hasAnyResponse = Object.keys(message.persona_responses).length > 0;
@@ -429,6 +440,7 @@ function CouncilMessageBlock({
           {isActivelyLoading &&
             message.currentPhase === "initial" &&
             nonModeratorMembers
+              .filter((m) => selectedSpeakerIds.has(m.personaId)) // Only show skeletons for selected speakers
               .filter((m) => !message.conversation_turns!.some((t) => t.personaId === m.personaId))
               .filter((m) => m.personaId !== streamingId)
               .map((m) => {

@@ -8,6 +8,7 @@ interface UseCouncilReturn {
   messages: CouncilMessage[];
   isLoading: boolean;
   error: string | null;
+  selectedSpeakerIds: Set<string>; // Personas selected for current phase
   setMessages: React.Dispatch<React.SetStateAction<CouncilMessage[]>>;
   askCouncil: (question: string, councilRoomId: string, members: CouncilMember[], userSelectedSpeakerId?: string) => Promise<void>;
   stopCouncil: () => void;
@@ -17,6 +18,7 @@ export function useCouncil(initialMessages: CouncilMessage[] = []): UseCouncilRe
   const [messages, setMessages] = useState<CouncilMessage[]>(initialMessages);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedSpeakerIds, setSelectedSpeakerIds] = useState<Set<string>>(new Set());
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const stopCouncil = useCallback(() => {
@@ -287,6 +289,11 @@ export function useCouncil(initialMessages: CouncilMessage[] = []): UseCouncilRe
                 );
                 break;
               }
+              case "speakers_selected": {
+                // Track which speakers were selected for this phase so UI can selectively render skeletons
+                setSelectedSpeakerIds(new Set(event.phasePersonaIds));
+                break;
+              }
               case "done": {
                 if (flushTimer) {
                   clearTimeout(flushTimer);
@@ -336,5 +343,5 @@ export function useCouncil(initialMessages: CouncilMessage[] = []): UseCouncilRe
     []
   );
 
-  return { messages, isLoading, error, setMessages, askCouncil, stopCouncil };
+  return { messages, isLoading, error, selectedSpeakerIds, setMessages, askCouncil, stopCouncil };
 }
