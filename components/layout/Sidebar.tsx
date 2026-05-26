@@ -20,7 +20,25 @@ interface SidebarProps {
   user: User;
   isOpen: boolean;
   onClose: () => void;
+  /** Explicit session status — inferred from pathname when omitted */
+  sessionStatus?: "live" | "idle" | "completed";
 }
+
+/** Derive a wayfinding status from the current pathname */
+function useSessionStatus(explicit?: "live" | "idle" | "completed") {
+  const pathname = usePathname();
+  if (explicit) return explicit;
+  // In a council session → show as live; everywhere else → idle
+  return pathname.startsWith("/council/") && !pathname.startsWith("/council/new")
+    ? ("live" as const)
+    : ("idle" as const);
+}
+
+const STATUS_CONFIG = {
+  live:      { color: "#15803D", label: "Live" },
+  idle:      { color: "#8A847A", label: "Idle" },
+  completed: { color: "#6D5BE3", label: "Completed" },
+} as const;
 
 const NAV_ITEMS = [
   {
@@ -40,9 +58,11 @@ const NAV_ITEMS = [
   },
 ];
 
-export function Sidebar({ user, isOpen, onClose }: SidebarProps) {
+export function Sidebar({ user, isOpen, onClose, sessionStatus: explicitStatus }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const status = useSessionStatus(explicitStatus);
+  const statusCfg = STATUS_CONFIG[status];
 
   async function handleSignOut() {
     const supabase = createClient();
@@ -58,12 +78,21 @@ export function Sidebar({ user, isOpen, onClose }: SidebarProps) {
         isOpen ? "translate-x-0" : "-translate-x-full"
       )}
     >
-      {/* Header */}
+      {/* Header — CouncilMark + wordmark */}
       <div className="flex items-center justify-between px-5 py-4 border-b border-surface-border">
         <div className="flex items-center gap-2.5">
-          <div className="w-7 h-7 rounded-md bg-accent-muted border border-accent/30 flex items-center justify-center shrink-0">
-            <Users size={14} className="text-accent" />
-          </div>
+          {/* CouncilMark: 8 dots in a ring, accent center dot */}
+          <svg width="22" height="22" viewBox="0 0 48 48" className="shrink-0 text-text-primary" aria-hidden="true">
+            <circle cx="24" cy="6"     r="2.8" fill="currentColor" />
+            <circle cx="38.8" cy="13"  r="2.8" fill="currentColor" />
+            <circle cx="42"   cy="24"  r="2.8" fill="currentColor" />
+            <circle cx="38.8" cy="35"  r="2.8" fill="currentColor" />
+            <circle cx="24"   cy="42"  r="2.8" fill="currentColor" />
+            <circle cx="9.2"  cy="35"  r="2.8" fill="currentColor" />
+            <circle cx="6"    cy="24"  r="2.8" fill="currentColor" />
+            <circle cx="9.2"  cy="13"  r="2.8" fill="currentColor" />
+            <circle cx="24"   cy="24"  r="3.8" fill="#6D5BE3" />
+          </svg>
           <span className="text-sm font-serif italic text-text-primary tracking-tight">
             Council of Elites
           </span>
@@ -74,6 +103,21 @@ export function Sidebar({ user, isOpen, onClose }: SidebarProps) {
         >
           <X size={16} />
         </button>
+      </div>
+
+      {/* Session status indicator — wayfinding (live / idle / completed) */}
+      <div className="grid grid-cols-[6px_1fr_auto] items-center gap-2 px-5 py-2.5 border-b border-surface-border">
+        <span
+          className="w-1.5 h-1.5 rounded-full shrink-0"
+          style={{ backgroundColor: statusCfg.color }}
+        />
+        <span className="text-[11px] text-text-muted">Current session</span>
+        <span
+          className="font-mono text-[10px] uppercase tracking-[0.08em]"
+          style={{ color: statusCfg.color }}
+        >
+          {statusCfg.label}
+        </span>
       </div>
 
       {/* New Council CTA */}

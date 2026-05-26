@@ -6,6 +6,31 @@
 :root {
   --radius: 10px;
   --font-display: var(--font-instrument-serif, 'Georgia', serif);
+
+  /* ── Elevation — 3 levels, warm and restrained ──────────────────────── */
+  --shadow-card:     0 1px 0 rgba(26,24,21,.02), 0 1px 2px rgba(26,24,21,.04);
+  --shadow-elevated: 0 2px 4px rgba(26,24,21,.04), 0 8px 24px -8px rgba(26,24,21,.08);
+  --shadow-modal:    0 4px 12px rgba(26,24,21,.08), 0 24px 64px -12px rgba(26,24,21,.16);
+  --shadow-glow:     0 0 0 1px rgba(109,91,227,.15), 0 0 24px -4px rgba(109,91,227,.25);
+
+  /* ── Motion — every transition has 16ms of intent ───────────────────── */
+  --ease-out:    cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-instant: 100ms;
+  --dur-quick:   160ms;
+  --dur-fade:    200ms;
+  --dur-slide:   300ms;
+
+  /* ── Persona ink colors ─────────────────────────────────────────────── */
+  --persona-strategist:  #3B82F6;  /* Maya Krishnan  */
+  --persona-operator:    #10B981;  /* Daniel Okafor  */
+  --persona-analyst:     #8B5CF6;  /* Hana Mori      */
+  --persona-negotiator:  #F59E0B;  /* Rafa Velez     */
+  --persona-coach:       #EC4899;  /* Imani Wright   */
+  --persona-provocateur: #EF4444;  /* Eitan Bergmann */
+  --persona-storyteller: #06B6D4;  /* Priya Anand    */
+  --persona-steward:     #78716C;  /* Tomás Rivera   */
 }
 
 /* ── Reset ───────────────────────────────────────────────────────────────────── */
@@ -113,3 +138,23 @@ body::before {
   0%, 100% { opacity: 0.08; }
   50%       { opacity: 0.14; }
 }
+
+/* ── Streaming card — left-border "breath" shimmer ───────────────────────────── */
+/* Applied to an absolutely-positioned overlay on the left border when streaming */
+@keyframes stream-breath {
+  0%, 100% { opacity: 0.4; }
+  50%       { opacity: 1; }
+}
+
+@layer utilities {
+  .animate-stream-breath {
+    animation: stream-breath 1.8s var(--ease-in-out, ease-in-out) infinite;
+  }
+}
+
+/* ── Role-tinted card backgrounds (4% opacity — subliminal, not garish) ─────── */
+/* Applied via inline style on PersonaResponseCard based on response.role         */
+/* .role-tint-advocate  → rgba(21, 128, 61,  0.04)                               */
+/* .role-tint-critic    → rgba(185, 28, 28,  0.04)                               */
+/* .role-tint-moderator → rgba(109, 40, 217, 0.04)                               */
+/* .role-tint-questioner→ rgba(29,  78, 216, 0.04)                               */

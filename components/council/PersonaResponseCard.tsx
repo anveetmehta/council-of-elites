@@ -4,6 +4,22 @@ import { PersonaAvatar } from "@/components/personas/PersonaAvatar";
 import { TierBadge } from "@/components/personas/TierBadge";
 import { getRoleBadgeConfig, getRoleLeftBorderClass, cn } from "@/lib/utils";
 
+/** 4% opacity role tints — subliminal texture, never garish */
+const ROLE_TINT_COLORS: Record<string, string> = {
+  advocate:   "rgba(21,128,61,0.04)",
+  critic:     "rgba(185,28,28,0.04)",
+  moderator:  "rgba(109,40,217,0.04)",
+  questioner: "rgba(29,78,216,0.04)",
+};
+
+/** Role left-border colors (matches Tailwind border-l-role-* values) */
+const ROLE_LEFT_COLORS: Record<string, string> = {
+  advocate:   "#15803D",
+  critic:     "#B91C1C",
+  moderator:  "#6D28D9",
+  questioner: "#1D4ED8",
+};
+
 /** Renders plain text, converting *word* and **word** markdown emphasis to <em>/<strong> */
 function ResponseText({ text }: { text: string }) {
   // Split on **bold** and *italic* patterns, render inline
@@ -48,6 +64,11 @@ export function PersonaResponseCard({
 }: PersonaResponseCardProps) {
   const { label, className: roleClass } = getRoleBadgeConfig(response.role);
   const leftBorder = getRoleLeftBorderClass(response.role);
+
+  // Role-tinted background (4% opacity, subliminal differentiation)
+  const roleTint = ROLE_TINT_COLORS[response.role];
+  // Color used for streaming shimmer overlay (matches left border)
+  const streamingColor = ROLE_LEFT_COLORS[response.role] || persona.colorHex;
 
   // Show thinking state
   if (isThinking) {
@@ -104,7 +125,7 @@ export function PersonaResponseCard({
   return (
     <div
       className={cn(
-        "rounded-xl border bg-surface-raised p-4 border-l-4 animate-fade-up",
+        "relative rounded-xl border bg-surface-raised p-4 border-l-4 animate-fade-up",
         leftBorder || "border-l-surface-border",
         isHandoff
           ? "border-accent/40 ring-1 ring-accent/20 bg-gradient-to-b from-accent/5 to-transparent"
@@ -112,12 +133,20 @@ export function PersonaResponseCard({
           ? "border-surface-border opacity-90"
           : "border-surface-border"
       )}
-      style={
-        !leftBorder
-          ? { borderLeftColor: persona.colorHex }
-          : undefined
-      }
+      style={{
+        ...(!leftBorder ? { borderLeftColor: persona.colorHex } : {}),
+        // Role-tinted background: subliminal 4% tint differentiates card texture by debate role
+        ...(roleTint && !isHandoff ? { backgroundColor: roleTint } : {}),
+      }}
     >
+      {/* Streaming left-border breath shimmer */}
+      {isStreaming && (
+        <span
+          className="absolute inset-y-0 left-0 w-1 rounded-l-xl animate-stream-breath pointer-events-none"
+          style={{ backgroundColor: streamingColor }}
+        />
+      )}
+
       {/* Header */}
       <div className="flex items-start justify-between gap-2 mb-3">
         <div className="flex items-center gap-2.5">
@@ -125,7 +154,8 @@ export function PersonaResponseCard({
           <div className="flex-1">
             <div className="flex items-center gap-1.5 flex-wrap">
               {persona.icon && <span className="text-sm">{persona.icon}</span>}
-              <span className="text-xs font-semibold text-text-primary font-serif">
+              {/* Persona name: 13px serif italic (design spec: "byline" step) */}
+              <span className="text-[13px] font-semibold text-text-primary font-serif italic">
                 {persona.name}
               </span>
               <TierBadge type={persona.personaType} />
@@ -165,9 +195,9 @@ export function PersonaResponseCard({
         )}
       </div>
 
-      {/* Response */}
+      {/* Response — 14px Jakarta, line-height 1.75 (design spec: "body" step) */}
       <div className={cn(
-        "response-content text-sm leading-relaxed",
+        "response-content text-sm leading-[1.75]",
         isHandoff ? "text-text-primary" : "text-text-secondary"
       )}>
         <ResponseText text={response.response} />

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- Simplified ring + center for favicon — ring only, no individual dots below 24px -->
+  <circle cx="16" cy="4"    r="2"   fill="#1A1815"/>
+  <circle cx="25.7" cy="8.3" r="2"  fill="#1A1815"/>
+  <circle cx="28"  cy="16"  r="2"   fill="#1A1815"/>
+  <circle cx="25.7" cy="23.7" r="2" fill="#1A1815"/>
+  <circle cx="16"  cy="28"  r="2"   fill="#1A1815"/>
+  <circle cx="6.3" cy="23.7" r="2"  fill="#1A1815"/>
+  <circle cx="4"   cy="16"  r="2"   fill="#1A1815"/>
+  <circle cx="6.3" cy="8.3" r="2"   fill="#1A1815"/>
+  <circle cx="16"  cy="16"  r="3"   fill="#6D5BE3"/>
+</svg>
