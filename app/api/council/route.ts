@@ -15,6 +15,9 @@ import {
   checkInputSafety,
   classifyNeedsScoping,
   streamScopingTurn,
+  classifyStakes,
+  selectTrivialAdvisor,
+  streamTrivialResponse,
   ConversationEntry,
   PriorRound,
   type StanceMap,
@@ -130,6 +133,104 @@ export async function POST(req: NextRequest) {
 
   const moderators = members.filter((m) => m.role === "moderator");
   const nonModerators = members.filter((m) => m.role !== "moderator");
+
+  // ── Stakes classification: short-circuit trivial questions ────────────────
+  // A trivial first-turn question (e.g. "walk or drive 50m to the car wash?")
+  // should not mobilize a council. One advisor, one line, no synthesis, no
+  // artifact. This bypasses scoping, stance priming, conductor selection, and
+  // every downstream synthesis stage. See lib/anthropic/council.ts:classifyStakes.
+  const isFirstTurn = (recentMessages?.length ?? 0) === 0;
+  const userPickedSpeaker = Boolean(userSelectedSpeakerId);
+  let stakes: "trivial" | "moderate" | "consequential" = "moderate";
+  if (isFirstTurn && !userPickedSpeaker && nonModerators.length >= 2) {
+    try {
+      stakes = await classifyStakes(question);
+    } catch {
+      stakes = "moderate";
+    }
+  }
+
+  if (stakes === "trivial") {
+    const advisor = selectTrivialAdvisor(question, nonModerators);
+    if (advisor) {
+      const stream = new ReadableStream({
+        async start(controller) {
+          const send = (event: SSEEvent) => {
+            controller.enqueue(encodeSSE(event));
+          };
+          try {
+            send({ type: "speakers_selected", phasePersonaIds: [advisor.personaId] });
+            send({ type: "phase_change", phase: "initial" });
+            send({ type: "persona_thinking", personaId: advisor.personaId });
+            send({ type: "persona_start", personaId: advisor.personaId, role: advisor.role });
+
+            const trivialResult = await streamTrivialResponse(advisor, question, (text) =>
+              send({ type: "token", personaId: advisor.personaId, text })
+            );
+
+            const trivialTurn: ConversationTurn = {
+              turnIndex: 0,
+              personaId: advisor.personaId,
+              role: advisor.role,
+              phase: "initial",
+              response: trivialResult.response,
+              speakerSource: "system",
+              isHandoff: true,
+            };
+
+            send({
+              type: "turn_done",
+              turnIndex: 0,
+              personaId: advisor.personaId,
+              role: advisor.role,
+              phase: "initial",
+              fullResponse: trivialResult.response,
+              speakerSource: "system",
+              isHandoff: true,
+            });
+            send({
+              type: "persona_done",
+              personaId: advisor.personaId,
+              role: advisor.role,
+              fullResponse: trivialResult.response,
+            });
+
+            // Persist the message (skip synthesis, chips, artifact)
+            const allResponses: Record<string, PersonaResponse> = {
+              [advisor.personaId]: trivialResult,
+            };
+            const { data: msg } = await supabase
+              .from("council_messages")
+              .insert({
+                council_room_id: councilRoomId,
+                user_prompt: question,
+                persona_responses: allResponses,
+                moderator_output: null,
+                auto_summary: null,
+                conversation_turns: [trivialTurn],
+              })
+              .select("id")
+              .single();
+
+            send({ type: "done", councilMessageId: msg?.id ?? null });
+            controller.close();
+          } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : "Trivial path failed";
+            send({ type: "error", message: errorMessage });
+            controller.close();
+          }
+        },
+      });
+
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+        },
+      });
+    }
+  }
 
   // Build recent verbatim rounds (last 2, chronological order)
   const recentRounds: PriorRound[] = (recentMessages ?? [])

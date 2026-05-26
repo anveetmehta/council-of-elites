@@ -107,6 +107,153 @@ Answer in one word: YES or NO.`,
   }
 }
 
+// ── Stakes calibration: detect trivial questions that don't warrant a council ──
+//
+// The system was over-philosophizing trivial questions ("walk or drive 50m?" got
+// EV math, premise inversions, and psychological synthesis). The root cause:
+// classifyNeedsScoping checks *vagueness*, not *stakes*. A specific trivial
+// question passes the vagueness check and proceeds to full panel treatment.
+//
+// classifyStakes adds a stakes-aware path: trivial questions get a single advisor,
+// one-line answer, no synthesis, no artifact. Council declines the bit.
+export type QuestionStakes = "trivial" | "moderate" | "consequential";
+
+const TRIVIAL_KEYWORDS = [
+  "walk", "drive", "lunch", "dinner", "breakfast", "wear", "coffee", "tea",
+  "buy", "shop", "park", "ride", "take", "order", "eat", "snack",
+];
+const CONSEQUENTIAL_KEYWORDS = [
+  "career", "marriage", "divorce", "company", "fire", "fired", "leaving",
+  "investing", "invest", "mortgage", "loan", "kids", "child", "pregnancy",
+  "death", "cancer", "illness", "depression", "anxiety", "therapy",
+  "lawsuit", "sue", "co-founder", "cofounder", "equity", "salary",
+];
+
+export async function classifyStakes(question: string): Promise<QuestionStakes> {
+  const q = question.trim().toLowerCase();
+  const wordCount = q.split(/\s+/).length;
+
+  // Heuristic: short questions with trivial-domain keywords are almost always trivial.
+  if (wordCount <= 14) {
+    const hasTrivial = TRIVIAL_KEYWORDS.some((kw) =>
+      new RegExp(`\\b${kw}\\b`).test(q)
+    );
+    if (hasTrivial) return "trivial";
+  }
+
+  // Heuristic: any consequential keyword bumps to consequential immediately.
+  const hasConsequential = CONSEQUENTIAL_KEYWORDS.some((kw) =>
+    new RegExp(`\\b${kw}\\b`).test(q)
+  );
+  if (hasConsequential) return "consequential";
+
+  // Heuristic: very long, dollar-amount-heavy questions are usually consequential.
+  if (wordCount > 25 && /\$\s?\d|\d{3,}/.test(q)) return "consequential";
+
+  // Fallback: Haiku classifier for the ambiguous middle.
+  const client = getAnthropicClient();
+  try {
+    const message = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 8,
+      messages: [
+        {
+          role: "user",
+          content: `Classify the stakes of this question. Return ONE word: trivial, moderate, or consequential.
+
+trivial = a 10-second logistical choice (what to eat, which route, small purchase under $100, what to wear)
+moderate = a real but reversible decision (which feature to ship, how to phrase an email, weekend plans)
+consequential = identity, career, money over $5k, relationships, health, long-term commitments
+
+Question: "${question}"
+
+One word:`,
+        },
+      ],
+    });
+
+    const content = message.content[0];
+    if (content.type !== "text") return "moderate";
+    const word = content.text.trim().toLowerCase().split(/\s+/)[0];
+    if (word.startsWith("triv")) return "trivial";
+    if (word.startsWith("cons")) return "consequential";
+    return "moderate";
+  } catch {
+    // Safe default: never auto-classify as trivial on failure.
+    return "moderate";
+  }
+}
+
+// ── Trivial path: one advisor, one line, declines the bit ──
+//
+// When the council should NOT mobilize. Picks Daniel (execution/logistics)
+// or Rafa (social/tactical) based on keyword routing. The persona's usual
+// "MANDATORY OPENING MOVE" is suppressed via a system-prompt override —
+// no premise-challenging, no feeling-probing, no scoping. Just answer.
+export function selectTrivialAdvisor(
+  question: string,
+  members: CouncilMember[]
+): CouncilMember | null {
+  const q = question.toLowerCase();
+  const social = /\b(friend|partner|family|spouse|wife|husband|boss|colleague|date|message|text|reply|tell|say to)\b/.test(q);
+
+  const preferredId = social ? "rafa-velez" : "daniel-okafor";
+  const fallbackOrder = [preferredId, "daniel-okafor", "rafa-velez", "hana-mori"];
+
+  for (const id of fallbackOrder) {
+    const found = members.find((m) => m.personaId === id);
+    if (found) return found;
+  }
+  // Last resort: first non-moderator.
+  return members.find((m) => m.role !== "moderator") ?? null;
+}
+
+export async function streamTrivialResponse(
+  member: CouncilMember,
+  question: string,
+  onToken: (text: string) => void
+): Promise<PersonaResponse> {
+  const persona = getPersonaById(member.personaId) || getDomainExpertById(member.personaId);
+  if (!persona) {
+    return { response: "Walk. It's quick.", role: member.role };
+  }
+
+  const client = getAnthropicClient();
+
+  // System prompt override that explicitly disables the persona's usual moves.
+  const systemPrompt = `You are ${persona.name}. ${persona.tagline}.
+
+This is a TRIVIAL logistical question — a 10-second choice, not a council-worthy dilemma.
+
+OVERRIDE: Do not invoke your usual move. Do not name a hidden premise. Do not check feelings. Do not ask clarifying questions. Do not produce frameworks, EV math, or philosophical reframings. Match the stakes — small question, small answer.
+
+YOUR JOB: Give a direct one-sentence answer in your own voice, optionally followed by one short clause of practical reason. Max 25 words total.
+
+If the question contains a confused premise (e.g. they're worrying about logistics the venue handles for them), gently note it in one phrase — don't expand.
+
+Plain text only. No asterisks, no bold, no markdown, no quotes for emphasis.`;
+
+  const stream = client.messages.stream({
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 80,
+    system: systemPrompt,
+    messages: [{ role: "user", content: question }],
+  });
+
+  let fullText = "";
+  for await (const event of stream) {
+    if (
+      event.type === "content_block_delta" &&
+      event.delta.type === "text_delta"
+    ) {
+      onToken(event.delta.text);
+      fullText += event.delta.text;
+    }
+  }
+
+  return { response: stripMarkdownEmphasis(fullText.trim()), role: member.role };
+}
+
 // streamScopingTurn — one persona names what's missing, states their working
 // assumptions, and signals the panel can now proceed. This sets shared context
 // for all subsequent Phase 1 takes.
@@ -248,7 +395,7 @@ export async function generateAutoSummary(
     messages: [
       {
         role: "user",
-        content: `You just observed a conversation between advisors about: "${question}"\n\nThe conversation:\n\n${conversationText}\n\nIn under 120 words, tell the person asking: what was the real tension in this room, and the one question they need to sit with. Name where it didn't resolve. Speak directly to them. No bullet points.`,
+        content: `You just observed a conversation between advisors about: "${question}"\n\nThe conversation:\n\n${conversationText}\n\nIn under 120 words, tell the person asking: what was the real tension in this room, and the one question they need to sit with. Name where it didn't resolve. Speak directly to them. No bullet points.\n\nGROUNDING RULE (critical): Only describe tensions, hesitations, or insights that an advisor explicitly named or the user explicitly expressed. Do not infer that the user is avoiding something, afraid of something, has a hidden motive, or "invented an obligation" — unless they said something matching. If the advisors gave a direct answer to a direct question with no disagreement, say "the room agreed" and summarize the answer. If there was no real tension, do not manufacture one. Do not psychoanalyze. Do not invent depth.`,
       },
     ],
   });
@@ -933,6 +1080,8 @@ Produce a session artifact in JSON. Be concrete, personal, speak directly to the
   "walkingOutWith": "One sentence — the core insight, reframe, or clarity from this conversation",
   "keyDecision": "One sentence — the specific decision or question only they can now answer"
 }
+
+GROUNDING RULE (critical): cameInWith must reflect the literal question asked, not a psychological interpretation of it. walkingOutWith must reflect what the advisors actually concluded — not a manufactured insight. keyDecision must be a real choice that was surfaced in the conversation, not a probing question the synthesis is inventing. Do NOT claim the user "invented an obligation," is "avoiding" something, is "afraid" of something, or has any hidden motive unless they explicitly said so. If the conversation was a clean Q&A with a direct answer and no transformation, reflect that honestly — for example: cameInWith = "a logistical question about X"; walkingOutWith = "the council's direct answer: Y"; keyDecision = "none — this was a small choice, not a turning point." Do not psychoanalyze. Do not invent depth.
 
 Return ONLY valid JSON. No extra text.`,
       },
