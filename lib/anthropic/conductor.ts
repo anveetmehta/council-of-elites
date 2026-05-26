@@ -1,18 +1,16 @@
 /**
  * Council Conductor
  *
- * An LLM-powered orchestrator that watches the conversation and decides:
- *   - Who speaks next (and in what order)
- *   - What their intent should be (challenge, build, concretize, mirror, etc.)
- *   - When to hand back to the user
+ * An LLM-powered orchestrator that:
+ *   v1 — Picks which advisors speak each round (dynamic speaker selection)
+ *   v2 — Detects conversation pathologies and observes user temperature
  *
- * v1: Dynamic speaker selection for Phase 1 (initial takes) and Phase 2 (reactions).
- * Future: Pathology detection, debate-staging, tool routing, memory surfacing.
+ * Every call returns both a speaker decision AND an observation block.
+ * The observation block is logged and drives actions in later iterations.
  */
 
 import { getAnthropicClient } from "@/lib/anthropic/client";
 import { getAllPersonas } from "@/data/personas";
-import type { PersonaDefinition } from "@/types/persona.types";
 import type { CouncilMember } from "@/types/council.types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -23,20 +21,46 @@ export type SpeakerIntent =
   | "concretize"       // Translate abstraction into specific/actionable
   | "invert"           // Show the failure case or downside
   | "mirror"           // Reflect the emotional dimension back
-  | "quantify"         // Put a number on something
+  | "quantify"         // Put a number on something — triggers Hana
   | "reframe"          // Change the whole framing of the question
   | "historicize"      // Bring a long-arc or precedent lens
   | "synthesize";      // Pull threads together
 
+export type ConversationPathology =
+  | "validation_loop"     // 3+ advisors agreeing in a row, no pushback
+  | "abstraction_spiral"  // Each turn more abstract than the last
+  | "echo_chamber"        // Same point restated in different voices
+  | "topic_drift"         // Wandering from the real question
+  | "sycophancy_creep"    // Hedging, softening, over-qualifying
+  | "user_disengaged"     // User replies getting shorter / withdrawing
+  | "stuck_in_circles"    // 3+ turns, no new ground covered
+  | "none";               // No pathology detected
+
+export type UserTemperature =
+  | "engaged"       // Active, specific, leaning in
+  | "processing"    // Quiet — thinking, not withdrawing
+  | "withdrawing"   // Short replies, monosyllabic, trailing off
+  | "frustrated"    // Expressing confusion or irritation
+  | "unknown";      // Initial question, no signal yet
+
+export interface ConductorObservation {
+  pathology: ConversationPathology;
+  userTemperature: UserTemperature;
+  openThreads: string[];          // Unresolved sub-questions still on the table
+  conversationState: "productive" | "circling" | "resolving";
+  suggestedIntervention?: string; // What the conductor thinks should happen next (future use)
+}
+
 export interface ConductorSpeaker {
   personaId: string;
   intent: SpeakerIntent;
-  briefing?: string; // Optional 1-sentence context injection for this speaker's prompt
+  briefing?: string; // 1-sentence context injection for this speaker's prompt
 }
 
 export interface ConductorDecision {
-  speakers: ConductorSpeaker[]; // Ordered 2-4 speakers
-  reasoning: string;            // Logged — not shown to user
+  speakers: ConductorSpeaker[];       // Ordered 2-4 speakers
+  observation: ConductorObservation;  // Pathology + state — logged for quality tracking
+  reasoning: string;                  // Why these speakers were chosen
 }
 
 export interface ConductorInput {
@@ -85,7 +109,27 @@ export async function conductorSelectSpeakers(
       ? `\nAvoid selecting these (already spoke): ${input.previousSpeakers.join(", ")}`
       : "";
 
-  const prompt = `You are the Conductor of a council of advisors. Your job is to pick the right 2-4 advisors to speak, in the right order, for maximum value.
+  const pathologyGuide = input.conversationHistory
+    ? `
+PATHOLOGY DETECTION — also observe the conversation and report:
+- validation_loop: 3+ advisors agreeing in a row with no real pushback
+- abstraction_spiral: conversation getting more abstract instead of more concrete
+- echo_chamber: same point restated in different voices, no new ground
+- topic_drift: wandering from the original question to something adjacent
+- sycophancy_creep: hedging, softening, over-qualifying — no one says anything sharp
+- user_disengaged: user's replies are getting shorter, more vague, or withdrawing
+- stuck_in_circles: 3+ turns, no new information or position change
+- none: conversation is healthy
+
+USER TEMPERATURE:
+- engaged: asking specific follow-ups, providing new information, leaning in
+- processing: quiet but the silence feels like thinking, not withdrawal
+- withdrawing: replies shrinking, shorter, less committed
+- frustrated: expressing confusion, repeating themselves, or sounding irritated
+- unknown: this is the first question, no signal yet`
+    : "";
+
+  const prompt = `You are the Conductor of a council of advisors. Pick the right 2-4 advisors AND observe the conversation's health.
 
 THE QUESTION:
 "${input.question}"
@@ -96,32 +140,40 @@ ${avoidSection}
 
 ${phaseInstruction}
 
-SPEAKER INTENTS you can assign:
-- challenge: push back on something already said or assumed
+SPEAKER INTENTS:
+- challenge: push back on something said or assumed
 - build: extend or deepen a relevant point
-- concretize: translate abstraction into something specific and actionable
+- concretize: translate abstraction into specific/actionable
 - invert: surface the failure case, downside, or risk
-- mirror: reflect the emotional/identity dimension underneath the question
+- mirror: reflect the emotional/identity dimension
 - quantify: put a specific number or math on something
 - reframe: change the entire framing of the question
 - historicize: bring a long-arc or historical precedent lens
-- synthesize: pull threads together toward a conclusion
+- synthesize: pull threads together
 
-RULES:
-- Select 2-4 advisors (2 for simple/clear questions, 4 for complex/contested ones)
-- No two advisors should have the same intent unless the question is very complex
+SPEAKER SELECTION RULES:
+- Select 2-4 advisors (2 for simple questions, 3-4 for complex/contested)
+- No two advisors should have the same intent unless unavoidable
 - Prefer advisors whose conductorTags overlap with the question's domain
-- For "mirror" intent, always use imani-wright
-- For "quantify" intent, always use hana-mori
-- For "historicize" intent, always use tomas-rivera
-- For "reframe" intent, prefer eitan-bergmann
+- For "mirror" intent → always imani-wright
+- For "quantify" intent → always hana-mori (she has a calculator tool)
+- For "historicize" intent → always tomas-rivera
+- For "reframe" intent → prefer eitan-bergmann
+${pathologyGuide}
 
-Return ONLY valid JSON in this exact shape, no prose:
+Return ONLY valid JSON, no prose:
 {
   "speakers": [
-    { "personaId": "maya-krishnan", "intent": "challenge", "briefing": "optional one sentence to inject into her prompt" },
+    { "personaId": "maya-krishnan", "intent": "challenge", "briefing": "optional one sentence context for her prompt" },
     { "personaId": "hana-mori", "intent": "quantify" }
   ],
+  "observation": {
+    "pathology": "none",
+    "userTemperature": "unknown",
+    "openThreads": ["what their runway actually is", "whether the market is actually contested"],
+    "conversationState": "productive",
+    "suggestedIntervention": null
+  },
   "reasoning": "one sentence explaining the selection"
 }`;
 
@@ -129,7 +181,7 @@ Return ONLY valid JSON in this exact shape, no prose:
     const client = getAnthropicClient();
     const message = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
-      max_tokens: 400,
+      max_tokens: 600,
       messages: [{ role: "user", content: prompt }],
     });
 
@@ -140,20 +192,44 @@ Return ONLY valid JSON in this exact shape, no prose:
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return fallbackDecision(input, isFollowUp);
 
-    const parsed = JSON.parse(jsonMatch[0]) as ConductorDecision;
+    const parsed = JSON.parse(jsonMatch[0]);
 
-    // Validate
+    // Validate speakers
     if (!Array.isArray(parsed.speakers) || parsed.speakers.length < 2) {
       return fallbackDecision(input, isFollowUp);
     }
 
     // Ensure all selected persona IDs exist in the roster
     const validIds = new Set(input.allMembers.map((m) => m.personaId));
-    const validSpeakers = parsed.speakers.filter((s) => validIds.has(s.personaId));
+    const validSpeakers = (parsed.speakers as ConductorSpeaker[]).filter(
+      (s) => validIds.has(s.personaId)
+    );
 
     if (validSpeakers.length < 2) return fallbackDecision(input, isFollowUp);
 
-    return { speakers: validSpeakers, reasoning: parsed.reasoning ?? "" };
+    // Parse observation block (non-fatal if missing)
+    const observation: ConductorObservation = {
+      pathology: parsed.observation?.pathology ?? "none",
+      userTemperature: parsed.observation?.userTemperature ?? "unknown",
+      openThreads: Array.isArray(parsed.observation?.openThreads)
+        ? parsed.observation.openThreads
+        : [],
+      conversationState: parsed.observation?.conversationState ?? "productive",
+      suggestedIntervention: parsed.observation?.suggestedIntervention ?? undefined,
+    };
+
+    // Log pathologies when detected
+    if (observation.pathology !== "none") {
+      console.log(
+        `[Conductor] ⚠ Pathology detected: ${observation.pathology} | user: ${observation.userTemperature} | state: ${observation.conversationState}`
+      );
+    }
+
+    return {
+      speakers: validSpeakers,
+      observation,
+      reasoning: typeof parsed.reasoning === "string" ? parsed.reasoning : "",
+    };
   } catch (err) {
     console.error("[Conductor] selection failed:", err);
     return fallbackDecision(input, isFollowUp);
@@ -178,6 +254,12 @@ function fallbackDecision(
 
   return {
     speakers,
+    observation: {
+      pathology: "none",
+      userTemperature: "unknown",
+      openThreads: [],
+      conversationState: "productive",
+    },
     reasoning: "fallback: conductor call failed, using first available members",
   };
 }

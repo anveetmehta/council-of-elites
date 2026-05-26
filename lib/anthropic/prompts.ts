@@ -109,12 +109,24 @@ export function buildSystemPrompt(
 
   let prompt = `${persona.systemPrompt}\n\n${SHARED_PREAMBLE}`;
 
-  // Archetype toolkit (domain experts already have frameworks in their systemPrompt)
+  // Archetype toolkit — inject for legacy archetype personas
   if (persona.personaType === "archetype") {
     const toolkit = ARCHETYPE_FRAMEWORKS[persona.archetype];
     if (toolkit) {
       prompt += `\n\n${toolkit}`;
     }
+  }
+
+  // Voice rules — inject for SME personas (reinforces distinctive voice on every call)
+  if (persona.personaType === "sme" && persona.voiceRules) {
+    const vr = persona.voiceRules;
+    const phrases = vr.characteristicPhrases.map((p) => `  "${p}"`).join("\n");
+    prompt += `\n\nYOUR VOICE — stay in character:
+Sentence style: ${vr.sentenceStyle}
+Signature phrases (use these naturally, not all at once):
+${phrases}
+How you think out loud: ${vr.thinkingStyle}
+What you never do: ${vr.avoids}`;
   }
 
   prompt += ROLE_INJECTIONS[member.role];

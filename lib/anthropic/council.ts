@@ -4,6 +4,8 @@ import { getPersonaById } from "@/data/personas";
 import { getDomainExpertById } from "@/data/domain-experts";
 import { type MemoryEntry } from "@/lib/memory";
 import { buildSystemPrompt, stripMarkdownEmphasis } from "./prompts";
+import { CALCULATOR_TOOL, CALCULATOR_ENABLED_PERSONAS, runCalculator, formatCalculatorResult } from "@/lib/tools/calculator";
+import type Anthropic from "@anthropic-ai/sdk";
 
 // Re-export for backward compat — callers import these from "./council" too
 export { buildSystemPrompt, stripMarkdownEmphasis } from "./prompts";
@@ -307,6 +309,79 @@ export async function generateCouncilTitle(question: string): Promise<string> {
   return content.text.trim();
 }
 
+// ── Tool-use path for calculator-enabled personas (Hana, Daniel) ──
+// Uses non-streaming messages.create so we can handle multi-turn tool calls,
+// then emits the final text as a batch. The "thinking" indicator covers the gap.
+
+async function runPersonaWithTools(
+  systemPrompt: string,
+  messages: Anthropic.MessageParam[],
+  onToken: (text: string) => void,
+  maxTokens = 300
+): Promise<string> {
+  const client = getAnthropicClient();
+
+  // First call with tools enabled
+  const response = await client.messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: maxTokens,
+    system: systemPrompt,
+    messages,
+    tools: [CALCULATOR_TOOL],
+    tool_choice: { type: "auto" },
+  });
+
+  let finalText = "";
+  const toolUseBlocks: Anthropic.ToolUseBlock[] = [];
+
+  for (const block of response.content) {
+    if (block.type === "text") {
+      finalText += block.text;
+    } else if (block.type === "tool_use") {
+      toolUseBlocks.push(block);
+    }
+  }
+
+  // Handle tool calls — execute and get continuation
+  if (toolUseBlocks.length > 0 && response.stop_reason === "tool_use") {
+    const toolResults: Anthropic.ToolResultBlockParam[] = toolUseBlocks.map((tb) => {
+      const input = tb.input as { expression: string; label?: string };
+      const result = runCalculator(input);
+      return {
+        type: "tool_result" as const,
+        tool_use_id: tb.id,
+        content: formatCalculatorResult(result),
+      };
+    });
+
+    // Continue with tool results injected
+    const continuation = await client.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 250,
+      system: systemPrompt,
+      messages: [
+        ...messages,
+        { role: "assistant", content: response.content },
+        { role: "user", content: toolResults },
+      ],
+      tools: [CALCULATOR_TOOL],
+      tool_choice: { type: "auto" },
+    });
+
+    finalText = "";
+    for (const block of continuation.content) {
+      if (block.type === "text") finalText += block.text;
+    }
+  }
+
+  // Emit as tokens (batch — shows after "thinking" state)
+  if (finalText) {
+    onToken(finalText);
+  }
+
+  return finalText;
+}
+
 export async function streamPersonaWithHistory(
   member: CouncilMember,
   question: string,
@@ -373,6 +448,18 @@ export async function streamPersonaWithHistory(
     }
   }
 
+  // Calculator-enabled personas use the tool-use path
+  if (CALCULATOR_ENABLED_PERSONAS.has(member.personaId)) {
+    const fullText = await runPersonaWithTools(
+      systemPrompt,
+      [{ role: "user", content: userContent }],
+      onToken,
+      300
+    );
+    return { response: stripMarkdownEmphasis(fullText), role: member.role };
+  }
+
+  // All other personas: standard streaming
   const stream = client.messages.stream({
     model: "claude-sonnet-4-6",
     max_tokens: 160,
@@ -738,6 +825,18 @@ export async function streamReactionTurn(
     userContent += `\n\nWhat's been said:\n\n${transcript}\n\n---\nDirector's note: ${directorInstruction}\n\nReact. Name the specific claim and person you're pushing on. Under 70 words.`;
   }
 
+  // Calculator-enabled personas use the tool-use path
+  if (CALCULATOR_ENABLED_PERSONAS.has(member.personaId)) {
+    const fullText = await runPersonaWithTools(
+      systemPrompt,
+      [{ role: "user", content: userContent }],
+      onToken,
+      300
+    );
+    return { response: stripMarkdownEmphasis(fullText), role: member.role };
+  }
+
+  // All other personas: standard streaming
   const stream = client.messages.stream({
     model: "claude-sonnet-4-6",
     max_tokens: 160,
