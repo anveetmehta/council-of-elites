@@ -623,6 +623,10 @@ export async function streamPersonaWithHistory(
     }
   }
 
+  userContent += isLastInPhase1
+    ? `\n\nYou're the last initial take before the panel starts reacting to each other. Land on a specific recommendation — commit to a real answer, not another question.`
+    : `\n\nGive your actual take — a specific recommendation, not just a question. You can set up what the next panelist should weigh in on, but that's a bonus, not a substitute for answering.`;
+
   const modelToUse = selectModel(member.personaId, 'initial');
   const maxTokens = getMaxTokensForModel(modelToUse, 'initial');
 
