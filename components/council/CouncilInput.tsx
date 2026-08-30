@@ -12,7 +12,8 @@ const MENTION_HINT_KEY = "council_mention_hint_seen";
 interface CouncilInputProps {
   onSubmit: (question: string) => void;
   onStop?: () => void;
-  disabled?: boolean;
+  disabled?: boolean; // Genuinely can't submit anything right now (rare — not used for "round in flight")
+  roundInFlight?: boolean; // A round is streaming — the Stop control is available, but typing stays live
   placeholder?: string;
   members?: CouncilMember[];
   initialValue?: string;
@@ -24,6 +25,7 @@ export function CouncilInput({
   onSubmit,
   onStop,
   disabled,
+  roundInFlight = false,
   placeholder,
   members,
   initialValue,
@@ -208,7 +210,7 @@ export function CouncilInput({
               rows={1}
               className="flex-1 resize-none bg-transparent text-sm text-text-primary placeholder:text-text-muted focus:outline-none leading-relaxed min-h-[24px] max-h-40 disabled:opacity-50"
             />
-            {disabled && onStop ? (
+            {roundInFlight && onStop && !value.trim() ? (
               <button
                 onClick={onStop}
                 title="Stop generating"

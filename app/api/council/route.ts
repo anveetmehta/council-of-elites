@@ -321,6 +321,7 @@ export async function POST(req: NextRequest) {
         // If the question is missing critical context, one persona names what's
         // missing and states working assumptions before anyone gives advice.
         // Skips on follow-ups (recentRounds.length > 0) and single-persona councils.
+        let scoperPersonaId: string | null = null;
         if (!isSinglePersona && recentRounds.length === 0 && nonModerators.length >= 2) {
           try {
             const needsScoping = await classifyNeedsScoping(question);
@@ -337,6 +338,7 @@ export async function POST(req: NextRequest) {
                 getDomainExpertById(scoper.personaId);
 
               if (scoperPersona) {
+                scoperPersonaId = scoper.personaId;
                 send({ type: "persona_thinking", personaId: scoper.personaId });
                 await new Promise((resolve) => setTimeout(resolve, 400));
 
@@ -400,12 +402,17 @@ export async function POST(req: NextRequest) {
         // ═══ PHASE 1: Initial Takes (conductor-selected speakers) ═══
         // The conductor picks 2-4 of the 8 advisors based on the question's domain.
         // Falls back to first 3 members if the conductor call fails.
-        let phase1Members: CouncilMember[] = nonModerators;
-        if (!isSinglePersona && nonModerators.length > 2) {
+        // Excludes whoever just scoped — they already spoke; letting the conductor
+        // re-pick them means they immediately re-tread the same "what's missing" ground.
+        const phase1Pool = scoperPersonaId
+          ? nonModerators.filter((m) => m.personaId !== scoperPersonaId)
+          : nonModerators;
+        let phase1Members: CouncilMember[] = phase1Pool;
+        if (!isSinglePersona && phase1Pool.length > 2) {
           try {
             const decision = await conductorSelectSpeakers({
               question,
-              allMembers: nonModerators,
+              allMembers: phase1Pool,
               phase: "initial",
             });
 
@@ -413,7 +420,7 @@ export async function POST(req: NextRequest) {
             if (decision.observation && decision.observation.pathology !== "none") {
               const pathologyPersonaId = selectInterventionPersona(
                 decision.observation.pathology,
-                nonModerators,
+                phase1Pool,
                 conversationHistory
               );
 
@@ -422,7 +429,7 @@ export async function POST(req: NextRequest) {
                 logPathologyAction(decision.observation.pathology, pathologyPersonaId, briefing);
 
                 // Override Phase 1 speakers: force intervention persona
-                const interventionMember = nonModerators.find((m) => m.personaId === pathologyPersonaId);
+                const interventionMember = phase1Pool.find((m) => m.personaId === pathologyPersonaId);
                 if (interventionMember) {
                   phase1Members = [interventionMember];
                   // Inject pathology intervention briefing
@@ -434,14 +441,14 @@ export async function POST(req: NextRequest) {
                 // Pathology detected but no intervention persona available — proceed with normal selection
                 const selectedIds = decision.speakers.map((s) => s.personaId);
                 phase1Members = selectedIds
-                  .map((id) => nonModerators.find((m) => m.personaId === id))
+                  .map((id) => phase1Pool.find((m) => m.personaId === id))
                   .filter((m): m is CouncilMember => !!m);
               }
             } else {
               // No pathology detected — use normal conductor selection
               const selectedIds = decision.speakers.map((s) => s.personaId);
               phase1Members = selectedIds
-                .map((id) => nonModerators.find((m) => m.personaId === id))
+                .map((id) => phase1Pool.find((m) => m.personaId === id))
                 .filter((m): m is CouncilMember => !!m);
             }
 
@@ -455,7 +462,7 @@ export async function POST(req: NextRequest) {
             }
           } catch (err) {
             console.error("[Conductor] Phase 1 selection failed, using fallback:", err);
-            phase1Members = nonModerators.slice(0, 3);
+            phase1Members = phase1Pool.slice(0, 3);
           }
         }
 

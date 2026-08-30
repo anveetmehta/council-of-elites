@@ -1,5 +1,5 @@
 import { getAnthropicClient } from "./client";
-import { CouncilMember, PersonaResponse, CouncilRole, ConversationTurn, DirectorDecision } from "@/types/council.types";
+import { CouncilMember, PersonaResponse, CouncilRole, ConversationTurn, DirectorDecision, type MoveType } from "@/types/council.types";
 import { getPersonaById } from "@/data/personas";
 import { getDomainExpertById } from "@/data/domain-experts";
 import { type MemoryEntry } from "@/lib/memory";
@@ -321,7 +321,7 @@ export async function generateAllStances(
 }
 
 // ── Move type classification (for director) ──
-export type MoveType = "PROPOSAL" | "CHALLENGE" | "QUESTION" | "BUILD" | "BRIDGE" | "CONCESSION" | "REFRAME" | "OBSERVATION";
+export type { MoveType } from "@/types/council.types";
 
 export async function classifyMove(
   turn: ConversationTurn,
@@ -623,6 +623,10 @@ export async function streamPersonaWithHistory(
     }
   }
 
+  userContent += isLastInPhase1
+    ? `\n\nYou're the last initial take before the panel starts reacting to each other. Land on a specific recommendation — commit to a real answer, not another question.`
+    : `\n\nGive your actual take — a specific recommendation, not just a question. You can set up what the next panelist should weigh in on, but that's a bonus, not a substitute for answering.`;
+
   const modelToUse = selectModel(member.personaId, 'initial');
   const maxTokens = getMaxTokensForModel(modelToUse, 'initial');
 
@@ -801,6 +805,48 @@ ${conversationText}`
 
 // ── AI Director with Move Awareness ──
 
+// ── Adaptive reaction length ──
+// Replaces a fixed reaction-count cap: reads the conversation's own signals
+// (move history, conductor-detected pathology) to decide whether the next
+// reaction should be another advisor-to-advisor turn or the handoff back to
+// the user. Whichever turn this returns stop=true for BECOMES the handoff
+// turn — the reaction phase never just stops without one.
+export function shouldWrapUpReactions(state: {
+  moveHistory: MoveType[];
+  pathology: string;
+  reactionsCompleted: number;
+  hardCap: number;
+}): { stop: boolean; reason: "converged" | "pathology" | "cap" | "continue" } {
+  const { moveHistory, pathology, reactionsCompleted, hardCap } = state;
+
+  if (pathology === "echo_chamber" || pathology === "stuck_in_circles" || pathology === "validation_loop") {
+    return { stop: true, reason: "pathology" };
+  }
+
+  if (reactionsCompleted >= hardCap) {
+    return { stop: true, reason: "cap" };
+  }
+
+  const lastTwo = moveHistory.slice(-2);
+  const lastMove = moveHistory[moveHistory.length - 1];
+
+  // An open thread — someone was just directly challenged or asked something —
+  // earns the panel more room even past what a fixed cap would have allowed.
+  if (reactionsCompleted >= 1 && (lastMove === "CHALLENGE" || lastMove === "QUESTION")) {
+    return { stop: false, reason: "continue" };
+  }
+
+  if (
+    reactionsCompleted >= 1 &&
+    lastTwo.length === 2 &&
+    lastTwo.every((m) => m === "BUILD" || m === "OBSERVATION" || m === "CONCESSION")
+  ) {
+    return { stop: true, reason: "converged" };
+  }
+
+  return { stop: false, reason: "continue" };
+}
+
 export async function callDirector(
   question: string,
   roster: Array<{ personaId: string; name: string; role: CouncilRole }>,
@@ -869,7 +915,7 @@ REACTION TURNS REMAINING: ${turnsRemaining}${moveContextBlock}
 
 Rules:
 - Honor conditional relevance first — if someone was directly named, they should respond.
-- Prefer to continue. Only set shouldContinue=false if turnsRemaining is 0, eligible list is empty, or last 2+ turns are clearly repetitive.
+- Whether to keep going at all is decided elsewhere, by the actual move history — you are only picking WHO speaks and what they should react to. Still set shouldContinue=false if turnsRemaining is 0 or the eligible list is empty, so a broken pick doesn't force a turn with nobody to speak.
 - The instruction should be SPECIFIC: name what claim to react to and from whom.
 
 Return ONLY valid JSON:

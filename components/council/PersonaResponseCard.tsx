@@ -1,5 +1,5 @@
 import { PersonaDefinition } from "@/types/persona.types";
-import { PersonaResponse } from "@/types/council.types";
+import { PersonaResponse, MoveType } from "@/types/council.types";
 import { PersonaAvatar } from "@/components/personas/PersonaAvatar";
 import { TierBadge } from "@/components/personas/TierBadge";
 import { getRoleBadgeConfig, getRoleLeftBorderClass, cn } from "@/lib/utils";
@@ -49,6 +49,7 @@ interface PersonaResponseCardProps {
   hasMemory?: boolean; // Whether this persona has memories of the user
   isScoping?: boolean; // This is a "setting context" turn before any takes
   isHandoff?: boolean; // This turn hands the conversation back to the user
+  moveType?: MoveType; // Classified conversational move — CONCESSION gets a visible badge
 }
 
 export function PersonaResponseCard({
@@ -61,6 +62,7 @@ export function PersonaResponseCard({
   hasMemory = false,
   isScoping = false,
   isHandoff = false,
+  moveType,
 }: PersonaResponseCardProps) {
   const { label, className: roleClass } = getRoleBadgeConfig(response.role);
   const leftBorder = getRoleLeftBorderClass(response.role);
@@ -176,6 +178,14 @@ export function PersonaResponseCard({
               {isHandoff && (
                 <span className="inline-flex items-center gap-1 text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-accent/15 border border-accent/40 text-accent">
                   Over to you
+                </span>
+              )}
+              {moveType === "CONCESSION" && (
+                <span
+                  title="This turn changed its position based on what another advisor said"
+                  className="inline-flex items-center gap-1 text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-orange-500/10 border border-orange-500/30 text-orange-300"
+                >
+                  Changed their mind
                 </span>
               )}
             </div>

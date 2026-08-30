@@ -29,6 +29,9 @@ export interface PersonaResponse {
   role: CouncilRole;
 }
 
+/** Conversational move classification, produced by classifyMove after a reaction/handoff turn */
+export type MoveType = "PROPOSAL" | "CHALLENGE" | "QUESTION" | "BUILD" | "BRIDGE" | "CONCESSION" | "REFRAME" | "OBSERVATION";
+
 /** A single speaking turn in the dynamic conversation */
 export interface ConversationTurn {
   turnIndex: number;
@@ -41,6 +44,11 @@ export interface ConversationTurn {
   speakerSource?: 'user' | 'director' | 'system'; // Who decided this speaker
   // Marks this reaction turn as the "ball back to user" turn
   isHandoff?: boolean;
+  // Move classification, attached right after this turn completes (reaction/handoff turns only)
+  moveType?: MoveType;
+  addressedTo?: string | null;
+  // Set when this turn's instruction was steered by a mid-round user interjection
+  userInterjection?: string;
 }
 
 /** AI Director decision — who speaks next? */
@@ -56,6 +64,32 @@ export interface SessionArtifact {
   keyDecision: string;
 }
 
+/** Persisted round status — a round starts 'in_progress' and is updated incrementally per turn */
+export type RoundStatus = 'in_progress' | 'completed' | 'failed';
+
+/** Everything the turn-by-turn engine needs to resume a round, beyond the turns already persisted */
+export interface RoundState {
+  phase: "scoping" | "initial" | "reaction" | "wrapup";
+  question: string;
+  members: CouncilMember[];
+  userSelectedSpeakerId?: string;
+  stances: Record<string, string>;
+  scoperPersonaId: string | null;
+  phase1MemberIds: string[];
+  phase1Index: number;
+  conductorReactionOrder: string[];
+  reactionSetupDone: boolean;
+  reactionPathology: string; // ConversationPathology, kept as string to avoid a conductor.ts type dependency here
+  userSelectionUsed: boolean;
+  reactionCountsLocal: Record<string, number>;
+  reactionsCompleted: number;
+  // Snapshotted once at round start — deliberately NOT re-fetched per turn, so every
+  // turn in this round sees the same prior-context the round began with.
+  recentRounds: Array<{ question: string; responses: Array<{ name: string; role: string; response: string }>; summary?: string }>;
+  conversationSummary?: string;
+  roomTitleMissing: boolean;
+}
+
 export interface CouncilMessage {
   id: string;
   council_room_id: string;
@@ -66,6 +100,9 @@ export interface CouncilMessage {
   created_at: string;
   // Dynamic conversation turns (null for legacy messages)
   conversation_turns?: ConversationTurn[] | null;
+  // Turn-by-turn round bookkeeping (absent/'completed' for legacy rows)
+  status?: RoundStatus;
+  round_state?: RoundState | null;
   // Streaming state (transient — not persisted)
   streamingPersonaId?: string;
   streamingModeratorId?: string;
@@ -93,8 +130,12 @@ export type SSEEvent =
   | { type: "speakers_selected"; phasePersonaIds: string[] } // Conductor selection for phase — tells UI which personas to expect
   | { type: "done"; councilMessageId: string | null }
   | { type: "error"; message: string }
-  | { type: "turn_done"; turnIndex: number; personaId: string; fullResponse: string; role: CouncilRole; phase: string; userRequestedSpeaker?: boolean; speakerSource?: 'user' | 'director' | 'system'; isHandoff?: boolean }
-  | { type: "phase_change"; phase: "scoping" | "initial" | "reaction" | "wrap-up" | "introduction" };
+  | { type: "turn_done"; turnIndex: number; personaId: string; fullResponse: string; role: CouncilRole; phase: string; userRequestedSpeaker?: boolean; speakerSource?: 'user' | 'director' | 'system'; isHandoff?: boolean; moveType?: MoveType; addressedTo?: string | null; userInterjection?: string }
+  | { type: "phase_change"; phase: "scoping" | "initial" | "reaction" | "wrap-up" | "introduction" }
+  // Marks the end of one /api/council/next-turn call. roundComplete=false means
+  // the client should immediately call next-turn again (picking up any queued
+  // interjection); true means the round is fully wrapped up and persisted.
+  | { type: "round_step_done"; roundComplete: boolean; councilMessageId: string };
 
 export interface RecommendedCouncil {
   id: string;

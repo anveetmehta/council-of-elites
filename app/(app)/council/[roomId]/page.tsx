@@ -37,7 +37,17 @@ function CouncilChatInner() {
   const initialQuestionFired = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  const { messages, isLoading, error: councilError, selectedSpeakerIds, setMessages, askCouncil, stopCouncil } = useCouncil([]);
+  const {
+    messages,
+    isLoading,
+    error: councilError,
+    selectedSpeakerIds,
+    pendingUserMessage,
+    setMessages,
+    askCouncil,
+    interjectCouncil,
+    stopCouncil,
+  } = useCouncil([]);
 
   // Load room and messages
   useEffect(() => {
@@ -87,6 +97,14 @@ function CouncilChatInner() {
 
   async function handleQuestion(question: string) {
     if (!room) return;
+
+    // Mid-round: this isn't a new question, it's an interjection into the
+    // round already in flight — queue it, don't start a fresh /start call.
+    if (isLoading) {
+      interjectCouncil(question);
+      return;
+    }
+
     const members = room.members as CouncilMember[];
 
     // @mention routing: if question starts with @Handle, only call that one persona
@@ -238,14 +256,27 @@ function CouncilChatInner() {
         </div>
       )}
 
-      {/* Input — placeholder shifts when latest turn is a handoff */}
+      {/* Queued interjection — typed mid-round, applied once the current speaker finishes */}
+      {pendingUserMessage && (
+        <div className="flex items-center justify-center gap-2 px-6 py-2 border-t border-surface-border bg-accent-muted/10">
+          <div className="w-1.5 h-1.5 rounded-full bg-accent" />
+          <span className="text-xs text-text-muted">
+            Queued — reaches the panel once the current speaker finishes
+          </span>
+        </div>
+      )}
+
+      {/* Input stays editable through the whole round — a submission mid-round
+          becomes an interjection (see handleQuestion) instead of a new question. */}
       <CouncilInput
         onSubmit={handleQuestion}
         onStop={stopCouncil}
-        disabled={isLoading}
+        roundInFlight={isLoading}
         placeholder={
           isHandoffPending
             ? "Answer their question…"
+            : isLoading
+            ? "Type to jump in…"
             : `Ask your ${room.title || "council"}…`
         }
         focusRing={isHandoffPending}
@@ -388,6 +419,13 @@ function CouncilMessageBlock({
                     <div className="h-px flex-1 bg-surface-border" />
                   </div>
                 )}
+                {turn.userInterjection && (
+                  <div className="flex justify-end mb-2">
+                    <div className="max-w-md rounded-xl rounded-tr-sm bg-accent-muted/20 border border-accent/20 px-3 py-2">
+                      <p className="text-xs text-text-secondary leading-relaxed">{turn.userInterjection}</p>
+                    </div>
+                  </div>
+                )}
                 <PersonaResponseCard
                   persona={p}
                   response={{ response: turn.response, role: turn.role }}
@@ -396,6 +434,7 @@ function CouncilMessageBlock({
                   hasMemory={!!message.personaMemoryCounts?.[turn.personaId]}
                   isScoping={turn.phase === "scoping"}
                   isHandoff={!!turn.isHandoff}
+                  moveType={turn.moveType}
                 />
               </div>
             );
